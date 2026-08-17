@@ -34,36 +34,78 @@
     <section class="dashboard hidden" id="dashboard">
       <div class="stats" id="stats"></div>
 
-      <div class="filters">
-        <label>Statut
-          <select id="filterStatus">
-            <option value="">Tous</option>
-            <option value="pending" selected>En attente</option>
-            <option value="printed">Imprimées</option>
-            <option value="failed">Échouées</option>
-          </select>
-        </label>
-        <label>École
-          <select id="filterInstance"><option value="">Toutes</option></select>
-        </label>
-        <button id="refreshBtn" type="button" class="secondary">Actualiser</button>
-      </div>
+      <nav class="tabs">
+        <button class="tab active" data-tab="requests">Demandes d’impression</button>
+        <button class="tab" data-tab="instances">Gestion des écoles</button>
+      </nav>
 
-      <table class="requests-table">
-        <thead>
-          <tr>
-            <th>École</th>
-            <th>Élève</th>
-            <th>Classe</th>
-            <th>Année</th>
-            <th>Format</th>
-            <th>Reçue le</th>
-            <th>Statut</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="requestsBody"><tr><td colspan="8" class="empty">Chargement…</td></tr></tbody>
-      </table>
+      <section class="tab-panel" id="requestsPanel">
+        <div class="filters">
+          <label>Statut
+            <select id="filterStatus">
+              <option value="">Tous</option>
+              <option value="pending" selected>En attente</option>
+              <option value="printed">Imprimées</option>
+              <option value="failed">Échouées</option>
+            </select>
+          </label>
+          <label>École
+            <select id="filterInstance"><option value="">Toutes</option></select>
+          </label>
+          <button id="refreshBtn" type="button" class="secondary">Actualiser</button>
+        </div>
+
+        <table class="requests-table">
+          <thead>
+            <tr>
+              <th>École</th>
+              <th>Élève</th>
+              <th>Classe</th>
+              <th>Année</th>
+              <th>Format</th>
+              <th>Reçue le</th>
+              <th>Statut</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="requestsBody"><tr><td colspan="8" class="empty">Chargement…</td></tr></tbody>
+        </table>
+      </section>
+
+      <section class="tab-panel hidden" id="instancesPanel">
+        <div class="panel-header">
+          <h2>Écoles / Instances</h2>
+          <button id="createInstanceBtn" type="button" class="primary">+ Créer une école</button>
+        </div>
+
+        <form class="create-form hidden" id="createInstanceForm">
+          <h3>Nouvelle école</h3>
+          <label>Nom de l’école<input type="text" id="newSchoolName" required placeholder="Ex. Complexe Scolaire Le Sage"></label>
+          <label>Slug (lettres, chiffres, tirets)<input type="text" id="newSchoolSlug" required placeholder="lesage"></label>
+          <label>Domaine<input type="text" id="newSchoolDomain" required placeholder="ecole.schoolsafe.cd"></label>
+          <label>URL API du VPS<input type="url" id="newSchoolApiBase" required placeholder="https://lesage.schoolsafe.cd/api"></label>
+          <label>URL Supabase<input type="url" id="newSchoolSupabaseUrl" required placeholder="https://xxx.supabase.co"></label>
+          <div class="form-actions">
+            <button type="submit" class="primary">Créer</button>
+            <button type="button" id="cancelCreateBtn" class="secondary">Annuler</button>
+          </div>
+        </form>
+
+        <table class="instances-table">
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Slug</th>
+              <th>Domaine</th>
+              <th>Statut</th>
+              <th>Token setup</th>
+              <th>Secret HMAC</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="instancesBody"><tr><td colspan="7" class="empty">Chargement…</td></tr></tbody>
+        </table>
+      </section>
     </section>
   </main>
 

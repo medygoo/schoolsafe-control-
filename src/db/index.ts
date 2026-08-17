@@ -9,6 +9,6 @@ export function createDatabase(url?: string): ControlDatabase {
   if (dsn.startsWith("postgres") || dsn.startsWith("postgresql")) {
     return new PostgresDatabase(dsn);
   }
-  const sqlitePath = dsn || process.env.DATA_DIR || "./data/control-app.db";
+  const sqlitePath = dsn ? dsn : `${process.env.DATA_DIR || "./data"}/control-app.db`;
   return new SqliteDatabase(sqlitePath);
 }

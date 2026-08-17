@@ -60,11 +60,26 @@
   }
 
   function statusLabel(status) {
-    return { pending: 'En attente', printed: 'Imprimée', failed: 'Échouée' }[status] || status;
+    return { pending: 'En attente', printed: 'Imprimée', failed: 'Échouée', active: 'Active', blocked: 'Bloquée' }[status] || status;
   }
 
   function formatBadge(fmt) {
     return fmt === 'badge' ? 'Badge vertical' : 'Carte PVC';
+  }
+
+  function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+  }
+
+  function copyToClipboard(text, label) {
+    navigator.clipboard.writeText(text).then(() => toast(`${label} copié`), () => toast('Copie échouée', 'error'));
+  }
+
+  function maskToken(token) {
+    if (!token || token.length < 12) return token || '—';
+    return token.slice(0, 6) + '…' + token.slice(-6);
   }
 
   let requestsCache = [];
@@ -81,12 +96,25 @@
       renderInstancesFilter();
       renderStats();
       renderRequests();
+      renderInstances();
     } catch (e) {
       toast(e.message, 'error');
       if (e.message.includes('401')) logout();
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // TABS
+  // ═══════════════════════════════════════════════════════════════════════
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    $('requestsPanel').classList.toggle('hidden', name !== 'requests');
+    $('instancesPanel').classList.toggle('hidden', name !== 'instances');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // REQUESTS
+  // ═══════════════════════════════════════════════════════════════════════
   function renderInstancesFilter() {
     const sel = $('filterInstance');
     const current = sel.value;
@@ -156,18 +184,132 @@
     }
   }
 
-  function esc(s) {
-    const d = document.createElement('div');
-    d.textContent = s == null ? '' : String(s);
-    return d.innerHTML;
+  // ═══════════════════════════════════════════════════════════════════════
+  // INSTANCES
+  // ═══════════════════════════════════════════════════════════════════════
+  function renderInstances() {
+    const tbody = $('instancesBody');
+    if (!instancesCache.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">Aucune école créée.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = instancesCache.map(i => {
+      const blocked = i.status === 'blocked';
+      return `<tr>
+        <td data-label="Nom"><b>${esc(i.school_name)}</b></td>
+        <td data-label="Slug">${esc(i.school_slug)}</td>
+        <td data-label="Domaine">${esc(i.domain)}</td>
+        <td data-label="Statut"><span class="status ${i.status}">${statusLabel(i.status)}</span></td>
+        <td data-label="Token setup">
+          <code title="${esc(i.setup_token)}">${maskToken(i.setup_token)}</code>
+          <button class="small" data-copy-token="${esc(i.setup_token)}">Copier</button>
+        </td>
+        <td data-label="Secret HMAC">
+          <code title="${esc(i.hmac_secret)}">${maskToken(i.hmac_secret)}</code>
+          <button class="small" data-copy-hmac="${esc(i.hmac_secret)}">Copier</button>
+        </td>
+        <td data-label="Actions" class="actions">
+          <button class="small warning" data-token="${i.id}">Nouveau token</button>
+          <button class="small warning" data-hmac="${i.id}">Nouveau HMAC</button>
+          ${blocked
+            ? `<button class="small success" data-unblock="${i.id}">Débloquer</button>`
+            : `<button class="small danger" data-block="${i.id}">Bloquer</button>`}
+        </td>
+      </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('button[data-copy-token]').forEach(btn => {
+      btn.addEventListener('click', () => copyToClipboard(btn.dataset.copyToken, 'Token setup'));
+    });
+    tbody.querySelectorAll('button[data-copy-hmac]').forEach(btn => {
+      btn.addEventListener('click', () => copyToClipboard(btn.dataset.copyHmac, 'Secret HMAC'));
+    });
+    tbody.querySelectorAll('button[data-token]').forEach(btn => {
+      btn.addEventListener('click', () => regenerateToken(btn.dataset.token));
+    });
+    tbody.querySelectorAll('button[data-hmac]').forEach(btn => {
+      btn.addEventListener('click', () => regenerateHmac(btn.dataset.hmac));
+    });
+    tbody.querySelectorAll('button[data-block]').forEach(btn => {
+      btn.addEventListener('click', () => setInstanceStatus(btn.dataset.block, 'block'));
+    });
+    tbody.querySelectorAll('button[data-unblock]').forEach(btn => {
+      btn.addEventListener('click', () => setInstanceStatus(btn.dataset.unblock, 'unblock'));
+    });
   }
 
+  async function regenerateToken(id) {
+    try {
+      await api('POST', `/instances/${id}/token`);
+      toast('Token régénéré');
+      await loadDashboard();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  async function regenerateHmac(id) {
+    try {
+      await api('POST', `/instances/${id}/revoke-hmac`);
+      toast('Secret HMAC régénéré');
+      await loadDashboard();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  async function setInstanceStatus(id, action) {
+    try {
+      await api('POST', `/instances/${id}/${action}`);
+      toast(action === 'block' ? 'École bloquée' : 'École débloquée');
+      await loadDashboard();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  function toggleCreateForm(show) {
+    $('createInstanceForm').classList.toggle('hidden', !show);
+    $('createInstanceBtn').classList.toggle('hidden', show);
+  }
+
+  async function createInstance(e) {
+    e.preventDefault();
+    const body = {
+      school_name: $('newSchoolName').value.trim(),
+      school_slug: $('newSchoolSlug').value.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, ''),
+      domain: $('newSchoolDomain').value.trim(),
+      api_base: $('newSchoolApiBase').value.trim(),
+      supabase_url: $('newSchoolSupabaseUrl').value.trim()
+    };
+    try {
+      const res = await api('POST', '/instances', body);
+      toast('École créée : ' + res.data.school_name);
+      e.target.reset();
+      toggleCreateForm(false);
+      await loadDashboard();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // EVENTS
+  // ═══════════════════════════════════════════════════════════════════════
   $('loginBtn').addEventListener('click', () => login($('adminToken').value.trim()));
   $('loginMainBtn').addEventListener('click', () => login($('adminTokenMain').value.trim()));
   $('logoutBtn').addEventListener('click', logout);
   $('refreshBtn').addEventListener('click', loadDashboard);
   $('filterStatus').addEventListener('change', renderRequests);
   $('filterInstance').addEventListener('change', renderRequests);
+
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  });
+
+  $('createInstanceBtn').addEventListener('click', () => toggleCreateForm(true));
+  $('cancelCreateBtn').addEventListener('click', () => toggleCreateForm(false));
+  $('createInstanceForm').addEventListener('submit', createInstance);
 
   if (adminToken) setLoggedIn(true);
 })();
