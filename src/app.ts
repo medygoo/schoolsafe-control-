@@ -1,17 +1,23 @@
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from "fastify";
+import fastifyStatic from "@fastify/static";
 import { ControlAppError, type ApiErrorBody } from "./http/errors.js";
 import { newRequestId } from "./http/request-id.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { registerCardRequestRoutes } from "./routes/card-requests.js";
-import type { JsonStore } from "./store.js";
+import type { ControlDatabase } from "./db/index.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export type BuildAppOptions = {
-  store: JsonStore;
+  db: ControlDatabase;
   adminToken: string;
   testRoutes?: boolean;
 };
 
-export function buildApp(options: BuildAppOptions): FastifyInstance {
+export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
 
   app.setErrorHandler((error, _request, reply) => {
@@ -33,8 +39,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/ready", async () => ({ status: "ready" as const }));
 
-  registerInstanceRoutes(app, options.store, options.adminToken);
-  registerCardRequestRoutes(app, options.store, options.adminToken);
+  registerInstanceRoutes(app, options.db, options.adminToken);
+  registerCardRequestRoutes(app, options.db, options.adminToken);
+
+  await app.register(fastifyStatic, {
+    root: join(__dirname, "../public"),
+    prefix: "/"
+  });
 
   if (options.testRoutes) {
     app.get("/__test/error", async () => {

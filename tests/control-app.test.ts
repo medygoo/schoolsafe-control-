@@ -1,37 +1,41 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { buildApp } from "../src/app.js";
-import { JsonStore } from "../src/store.js";
+import { SqliteDatabase } from "../src/db/sqlite.js";
 import { signRequest } from "../src/auth/hmac.js";
 
 const ADMIN_TOKEN = "test-admin-token-32-chars-long";
 
-function makeStore(): JsonStore {
-  const store = new JsonStore("./tmp/test-control-app.json");
-  store.reset();
-  return store;
+async function makeDb(): Promise<SqliteDatabase> {
+  const db = new SqliteDatabase(":memory:");
+  await db.init();
+  return db;
 }
 
-function makeApp(store: JsonStore) {
-  return buildApp({ store, adminToken: ADMIN_TOKEN, testRoutes: true });
+async function makeApp(db: SqliteDatabase) {
+  return buildApp({ db, adminToken: ADMIN_TOKEN, testRoutes: true });
 }
 
 describe("Control App", () => {
-  let store: JsonStore;
+  let db: SqliteDatabase;
 
-  beforeEach(() => {
-    store = makeStore();
+  beforeEach(async () => {
+    db = await makeDb();
+  });
+
+  afterEach(async () => {
+    await db.close();
   });
 
   describe("Health", () => {
     it("returns ok", async () => {
-      const app = makeApp(store);
+      const app = await makeApp(db);
       const res = await app.inject({ method: "GET", url: "/health" });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ status: "ok" });
     });
 
     it("returns ready", async () => {
-      const app = makeApp(store);
+      const app = await makeApp(db);
       const res = await app.inject({ method: "GET", url: "/ready" });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ status: "ready" });
@@ -40,14 +44,14 @@ describe("Control App", () => {
 
   describe("Instances", () => {
     it("rejects requests without admin token", async () => {
-      const app = makeApp(store);
+      const app = await makeApp(db);
       const res = await app.inject({ method: "GET", url: "/instances" });
       expect(res.statusCode).toBe(401);
       expect(res.json().code).toBe("AUTH_REQUIRED");
     });
 
     it("creates and lists an instance", async () => {
-      const app = makeApp(store);
+      const app = await makeApp(db);
       const create = await app.inject({
         method: "POST",
         url: "/instances",
@@ -77,7 +81,7 @@ describe("Control App", () => {
     });
 
     it("blocks and unblocks an instance", async () => {
-      const app = makeApp(store);
+      const app = await makeApp(db);
       const create = await app.inject({
         method: "POST",
         url: "/instances",
@@ -111,7 +115,7 @@ describe("Control App", () => {
   });
 
   describe("Card print requests", () => {
-    async function createInstance(app: ReturnType<typeof makeApp>) {
+    async function createInstance(app: Awaited<ReturnType<typeof makeApp>>) {
       const res = await app.inject({
         method: "POST",
         url: "/instances",
@@ -141,7 +145,7 @@ describe("Control App", () => {
     }
 
     it("accepts a request with valid HMAC", async () => {
-      const app = makeApp(store);
+      const app = await makeApp(db);
       const instance = await createInstance(app);
       const payload = {
         school_id: "sch-1",
@@ -177,7 +181,7 @@ describe("Control App", () => {
     });
 
     it("rejects a request with invalid HMAC", async () => {
-      const app = makeApp(store);
+      const app = await makeApp(db);
       const instance = await createInstance(app);
       const payload = {
         school_id: "sch-1",
@@ -211,7 +215,7 @@ describe("Control App", () => {
     });
 
     it("lists and marks requests as printed", async () => {
-      const app = makeApp(store);
+      const app = await makeApp(db);
       const instance = await createInstance(app);
       const payload = {
         school_id: "sch-1",

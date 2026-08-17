@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: schoolsafe-control-app
+    runtime: docker
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        sync: false # À remplir avec l'URL Neon PostgreSQL
+      - key: ADMIN_TOKEN
+        generateValue: true # Génère un token aléatoire, à noter dans un endroit sûr

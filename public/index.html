@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SchoolSafe Control — App centrale</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" type="image/png" href="/logo.png">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img src="/logo.png" alt="SchoolSafe"><span>SchoolSafe <strong>Control</strong></span></div>
+    <div class="auth" id="authSection">
+      <input type="password" id="adminToken" placeholder="Token admin" autocomplete="off">
+      <button id="loginBtn" type="button">Connexion</button>
+    </div>
+    <div class="auth hidden" id="userSection">
+      <span>Connecté</span>
+      <button id="logoutBtn" type="button" class="secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="container" id="app">
+    <section class="login-panel" id="loginPanel">
+      <img src="/logo.png" alt="SchoolSafe" class="login-logo">
+      <h1>App centrale SchoolSafe</h1>
+      <p>Gestion des instances écoles et des demandes d’impression de cartes.</p>
+      <label for="adminTokenMain">Token administrateur</label>
+      <input type="password" id="adminTokenMain" placeholder="Saisissez le token admin">
+      <button id="loginMainBtn" type="button" class="primary">Se connecter</button>
+      <p class="hint">Le token est défini dans la variable d’environnement <code>ADMIN_TOKEN</code>.</p>
+    </section>
+
+    <section class="dashboard hidden" id="dashboard">
+      <div class="stats" id="stats"></div>
+
+      <div class="filters">
+        <label>Statut
+          <select id="filterStatus">
+            <option value="">Tous</option>
+            <option value="pending" selected>En attente</option>
+            <option value="printed">Imprimées</option>
+            <option value="failed">Échouées</option>
+          </select>
+        </label>
+        <label>École
+          <select id="filterInstance"><option value="">Toutes</option></select>
+        </label>
+        <button id="refreshBtn" type="button" class="secondary">Actualiser</button>
+      </div>
+
+      <table class="requests-table">
+        <thead>
+          <tr>
+            <th>École</th>
+            <th>Élève</th>
+            <th>Classe</th>
+            <th>Année</th>
+            <th>Format</th>
+            <th>Reçue le</th>
+            <th>Statut</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="requestsBody"><tr><td colspan="8" class="empty">Chargement…</td></tr></tbody>
+      </table>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

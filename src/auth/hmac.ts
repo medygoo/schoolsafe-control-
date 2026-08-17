@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { ControlAppError } from "../http/errors.js";
-import type { JsonStore } from "../store.js";
+import type { ControlDatabase } from "../db/index.js";
 
 export function signRequest(payload: {
   method: string;
@@ -50,7 +50,7 @@ export type HmacAuthHeaders = {
 export async function authenticateHmac(
   request: FastifyRequest,
   reply: FastifyReply,
-  store: JsonStore
+  db: ControlDatabase
 ): Promise<void> {
   const instanceId = request.headers["x-schoolsafe-instance"] as string | undefined;
   const timestamp = request.headers["x-schoolsafe-timestamp"] as string | undefined;
@@ -60,7 +60,7 @@ export async function authenticateHmac(
     throw new ControlAppError(401, "AUTH_REQUIRED", "En-têtes d'authentification HMAC manquants", false);
   }
 
-  const instance = store.getInstanceById(instanceId);
+  const instance = await db.getInstanceById(instanceId);
   if (!instance) {
     throw new ControlAppError(401, "AUTH_INVALID", "Instance inconnue", false);
   }
