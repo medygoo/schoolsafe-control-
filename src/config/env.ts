@@ -15,6 +15,7 @@ export function parseEnv(input: Record<string, string | undefined>): ControlAppE
     HOST: input.HOST,
     PORT: input.PORT,
     DATA_DIR: input.DATA_DIR,
+    DATABASE_URL: input.DATABASE_URL,
     ADMIN_TOKEN: input.ADMIN_TOKEN
   });
   if (!parsed.success) {
