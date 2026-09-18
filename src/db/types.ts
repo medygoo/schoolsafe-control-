@@ -60,6 +60,11 @@ export interface ControlDatabase {
   getCardPrintBatches(filters?: { status?: string; instance_id?: string }): Promise<CardPrintBatch[]>;
   createCardPrintBatch(batch: CreateCardPrintBatchInput): Promise<CardPrintBatch>;
   updateCardPrintBatch(id: string, patch: Partial<CardPrintBatch>): Promise<CardPrintBatch | undefined>;
+
+
+  getDevices(filters?: { status?: string; instance_id?: string }): Promise<DeviceRecord[]>;
+  createDevice(device: CreateDeviceInput): Promise<DeviceRecord>;
+  updateDevice(id: string, patch: Partial<DeviceRecord>): Promise<DeviceRecord | undefined>;
 }
 
 export type CardPrintBatchStatus = "pending" | "downloaded" | "printed" | "failed";
@@ -82,3 +87,22 @@ export type CardPrintBatch = {
 };
 
 export type CreateCardPrintBatchInput = Omit<CardPrintBatch, "id" | "status" | "created_at" | "updated_at"> & { status?: CardPrintBatchStatus };
+
+export type DeviceStatus = "registered" | "testing" | "online" | "offline" | "disabled" | "revoked";
+
+export type DeviceRecord = {
+  id: string;
+  instance_id: string;
+  school_id: string;
+  device_code: string;
+  vendor: string;
+  model: string;
+  serial_number: string;
+  location: string | null;
+  status: DeviceStatus;
+  last_seen_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateDeviceInput = Omit<DeviceRecord, "id" | "status" | "last_seen_at" | "created_at" | "updated_at">;

@@ -70,3 +70,23 @@ CREATE TABLE IF NOT EXISTS card_print_batches (
 
 CREATE INDEX IF NOT EXISTS idx_cpb_instance_id ON card_print_batches(instance_id);
 CREATE INDEX IF NOT EXISTS idx_cpb_status ON card_print_batches(status);
+
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY,
+  instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+  school_id TEXT NOT NULL,
+  device_code TEXT NOT NULL,
+  vendor TEXT NOT NULL,
+  model TEXT NOT NULL,
+  serial_number TEXT NOT NULL,
+  location TEXT,
+  status TEXT NOT NULL DEFAULT 'registered' CHECK (status IN ('registered', 'testing', 'online', 'offline', 'disabled', 'revoked')),
+  last_seen_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (instance_id, device_code),
+  UNIQUE (serial_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_devices_instance_id ON devices(instance_id);
+CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);

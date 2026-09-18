@@ -6,6 +6,9 @@ import type {
   ControlDatabase,
   Instance,
   CardPrintRequest,
+  DeviceRecord,
+  DeviceStatus,
+  CreateDeviceInput,
   CardPrintBatch,
   CardPrintBatchStatus,
   CreateCardPrintBatchInput,
@@ -227,6 +230,51 @@ export class PostgresDatabase implements ControlDatabase {
       [patch.status ?? null, new Date().toISOString(), id]
     );
     return result.rows[0] ? this.rowToBatch(result.rows[0]) : undefined;
+  }
+
+  // ————— Device Hub : registre maître du matériel —————
+
+  private rowToDevice(row: Record<string, unknown>): DeviceRecord {
+    return {
+      id: String(row.id),
+      instance_id: String(row.instance_id),
+      school_id: String(row.school_id),
+      device_code: String(row.device_code),
+      vendor: String(row.vendor),
+      model: String(row.model),
+      serial_number: String(row.serial_number),
+      location: row.location ? String(row.location) : null,
+      status: (row.status as DeviceStatus) ?? "registered",
+      last_seen_at: row.last_seen_at ? String(row.last_seen_at) : null,
+      created_at: String(row.created_at),
+      updated_at: String(row.updated_at),
+    };
+  }
+
+  async getDevices(filters?: { status?: string; instance_id?: string }): Promise<DeviceRecord[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (filters?.status) { params.push(filters.status); conditions.push("status = $" + params.length); }
+    if (filters?.instance_id) { params.push(filters.instance_id); conditions.push("instance_id = $" + params.length); }
+    const where = conditions.length ? " where " + conditions.join(" and ") : "";
+    const result = await this.pool.query("select * from devices" + where + " order by created_at desc", params);
+    return result.rows.map((r: Record<string, unknown>) => this.rowToDevice(r));
+  }
+
+  async createDevice(input: CreateDeviceInput): Promise<DeviceRecord> {
+    const result = await this.pool.query(
+      "insert into devices (instance_id, school_id, device_code, vendor, model, serial_number, location) values ($1,$2,$3,$4,$5,$6,$7) returning *",
+      [input.instance_id, input.school_id, input.device_code, input.vendor, input.model, input.serial_number, input.location ?? null]
+    );
+    return this.rowToDevice(result.rows[0]);
+  }
+
+  async updateDevice(id: string, patch: Partial<DeviceRecord>): Promise<DeviceRecord | undefined> {
+    const result = await this.pool.query(
+      "update devices set status = coalesce($1, status), last_seen_at = coalesce($2, last_seen_at), updated_at = $3 where id = $4 returning *",
+      [patch.status ?? null, patch.last_seen_at ?? null, new Date().toISOString(), id]
+    );
+    return result.rows[0] ? this.rowToDevice(result.rows[0]) : undefined;
   }
 }
 

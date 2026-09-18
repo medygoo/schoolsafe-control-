@@ -7,6 +7,9 @@ import type {
   ControlDatabase,
   Instance,
   CardPrintRequest,
+  DeviceRecord,
+  DeviceStatus,
+  CreateDeviceInput,
   CardPrintBatch,
   CardPrintBatchStatus,
   CreateCardPrintBatchInput,
@@ -234,5 +237,52 @@ export class SqliteDatabase implements ControlDatabase {
     );
     const row = this.db.prepare("select * from card_print_batches where id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToBatch(row) : undefined;
+  }
+
+  // ————— Device Hub : registre maître du matériel —————
+
+  private rowToDevice(row: Record<string, unknown>): DeviceRecord {
+    return {
+      id: String(row.id),
+      instance_id: String(row.instance_id),
+      school_id: String(row.school_id),
+      device_code: String(row.device_code),
+      vendor: String(row.vendor),
+      model: String(row.model),
+      serial_number: String(row.serial_number),
+      location: row.location ? String(row.location) : null,
+      status: (row.status as DeviceStatus) ?? "registered",
+      last_seen_at: row.last_seen_at ? String(row.last_seen_at) : null,
+      created_at: String(row.created_at),
+      updated_at: String(row.updated_at),
+    };
+  }
+
+  async getDevices(filters?: { status?: string; instance_id?: string }): Promise<DeviceRecord[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (filters?.status) { params.push(filters.status); conditions.push("status = ?"); }
+    if (filters?.instance_id) { params.push(filters.instance_id); conditions.push("instance_id = ?"); }
+    const where = conditions.length ? " where " + conditions.join(" and ") : "";
+    const rows = this.db.prepare("select * from devices" + where + " order by created_at desc").all(...params);
+    return (rows as Record<string, unknown>[]).map((r) => this.rowToDevice(r));
+  }
+
+  async createDevice(input: CreateDeviceInput): Promise<DeviceRecord> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("insert into devices (id, instance_id, school_id, device_code, vendor, model, serial_number, location, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?)").run(
+      id, input.instance_id, input.school_id, input.device_code, input.vendor, input.model, input.serial_number, input.location ?? null, now, now
+    );
+    const row = this.db.prepare("select * from devices where id = ?").get(id) as Record<string, unknown>;
+    return this.rowToDevice(row);
+  }
+
+  async updateDevice(id: string, patch: Partial<DeviceRecord>): Promise<DeviceRecord | undefined> {
+    this.db.prepare("update devices set status = coalesce(?, status), last_seen_at = coalesce(?, last_seen_at), updated_at = ? where id = ?").run(
+      patch.status ?? null, patch.last_seen_at ?? null, new Date().toISOString(), id
+    );
+    const row = this.db.prepare("select * from devices where id = ?").get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToDevice(row) : undefined;
   }
 }
