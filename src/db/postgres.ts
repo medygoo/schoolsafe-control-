@@ -6,6 +6,9 @@ import type {
   ControlDatabase,
   Instance,
   CardPrintRequest,
+  CardPrintBatch,
+  CardPrintBatchStatus,
+  CreateCardPrintBatchInput,
   CreateInstanceInput,
   CreateCardPrintRequestInput
 } from "./types.js";
@@ -175,4 +178,55 @@ export class PostgresDatabase implements ControlDatabase {
     );
     return result.rows[0] ? rowToRequest(result.rows[0]) : undefined;
   }
+
+  // ————— Card print batches (lots ZIP de cartes) —————
+
+  private rowToBatch(row: Record<string, unknown>): CardPrintBatch {
+    return {
+      id: String(row.id),
+      instance_id: String(row.instance_id),
+      school_id: String(row.school_id),
+      batch_id: String(row.batch_id),
+      version: Number(row.version),
+      card_count: Number(row.card_count),
+      r2_key: String(row.r2_key),
+      zip_signed_url: String(row.zip_signed_url),
+      signed_url_expires_at: String(row.signed_url_expires_at),
+      zip_sha256: String(row.zip_sha256),
+      status: (row.status as CardPrintBatchStatus) ?? "pending",
+      metadata: typeof row.metadata === "string" ? JSON.parse(row.metadata) : (row.metadata ?? {}),
+      created_at: String(row.created_at),
+      updated_at: String(row.updated_at),
+    };
+  }
+
+  async getCardPrintBatches(filters?: { status?: string; instance_id?: string }): Promise<CardPrintBatch[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (filters?.status) { params.push(filters.status); conditions.push("status = $" + params.length); }
+    if (filters?.instance_id) { params.push(filters.instance_id); conditions.push("instance_id = $" + params.length); }
+    const where = conditions.length ? " where " + conditions.join(" and ") : "";
+    const result = await this.pool.query("select * from card_print_batches" + where + " order by created_at desc", params);
+    return result.rows.map((r: Record<string, unknown>) => this.rowToBatch(r));
+  }
+
+  async createCardPrintBatch(input: CreateCardPrintBatchInput): Promise<CardPrintBatch> {
+    const now = new Date().toISOString();
+    const result = await this.pool.query(
+      "insert into card_print_batches (instance_id, school_id, batch_id, version, card_count, r2_key, zip_signed_url, signed_url_expires_at, zip_sha256, status, metadata, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) returning *",
+      [input.instance_id, input.school_id, input.batch_id, input.version, input.card_count, input.r2_key,
+       input.zip_signed_url, input.signed_url_expires_at, input.zip_sha256, input.status ?? "pending",
+       JSON.stringify(input.metadata ?? {}), now]
+    );
+    return this.rowToBatch(result.rows[0]);
+  }
+
+  async updateCardPrintBatch(id: string, patch: Partial<CardPrintBatch>): Promise<CardPrintBatch | undefined> {
+    const result = await this.pool.query(
+      "update card_print_batches set status = coalesce($1, status), updated_at = $2 where id = $3 returning *",
+      [patch.status ?? null, new Date().toISOString(), id]
+    );
+    return result.rows[0] ? this.rowToBatch(result.rows[0]) : undefined;
+  }
 }
+

@@ -6,6 +6,7 @@ import { ControlAppError, type ApiErrorBody } from "./http/errors.js";
 import { newRequestId } from "./http/request-id.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { registerCardRequestRoutes } from "./routes/card-requests.js";
+import { registerCardBatchRoutes } from "./routes/card-batches.js";
 import type { ControlDatabase } from "./db/index.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -41,6 +42,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   registerInstanceRoutes(app, options.db, options.adminToken);
   registerCardRequestRoutes(app, options.db, options.adminToken);
+  registerCardBatchRoutes(app, options.db, options.adminToken);
 
   await app.register(fastifyStatic, {
     root: join(__dirname, "../public"),

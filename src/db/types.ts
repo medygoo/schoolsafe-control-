@@ -56,4 +56,29 @@ export interface ControlDatabase {
   getCardPrintRequestById(id: string): Promise<CardPrintRequest | undefined>;
   createCardPrintRequest(request: CreateCardPrintRequestInput): Promise<CardPrintRequest>;
   updateCardPrintRequest(id: string, patch: Partial<CardPrintRequest>): Promise<CardPrintRequest | undefined>;
+
+  getCardPrintBatches(filters?: { status?: string; instance_id?: string }): Promise<CardPrintBatch[]>;
+  createCardPrintBatch(batch: CreateCardPrintBatchInput): Promise<CardPrintBatch>;
+  updateCardPrintBatch(id: string, patch: Partial<CardPrintBatch>): Promise<CardPrintBatch | undefined>;
 }
+
+export type CardPrintBatchStatus = "pending" | "downloaded" | "printed" | "failed";
+
+export type CardPrintBatch = {
+  id: string;
+  instance_id: string;
+  school_id: string;
+  batch_id: string;
+  version: number;
+  card_count: number;
+  r2_key: string;
+  zip_signed_url: string;
+  signed_url_expires_at: string;
+  zip_sha256: string;
+  status: CardPrintBatchStatus;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateCardPrintBatchInput = Omit<CardPrintBatch, "id" | "status" | "created_at" | "updated_at"> & { status?: CardPrintBatchStatus };

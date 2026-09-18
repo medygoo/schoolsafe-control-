@@ -49,3 +49,24 @@ CREATE TABLE IF NOT EXISTS admin_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(token_hash);
+
+CREATE TABLE IF NOT EXISTS card_print_batches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+  school_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  card_count INTEGER NOT NULL,
+  r2_key TEXT NOT NULL,
+  zip_signed_url TEXT NOT NULL,
+  signed_url_expires_at TIMESTAMPTZ NOT NULL,
+  zip_sha256 TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'downloaded', 'printed', 'failed')),
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (instance_id, batch_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cpb_instance_id ON card_print_batches(instance_id);
+CREATE INDEX IF NOT EXISTS idx_cpb_status ON card_print_batches(status);
