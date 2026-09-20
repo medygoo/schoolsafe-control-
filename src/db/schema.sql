@@ -92,3 +92,6 @@ CREATE TABLE IF NOT EXISTS devices (
 
 CREATE INDEX IF NOT EXISTS idx_devices_instance_id ON devices(instance_id);
 CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
+
+CREATE TABLE IF NOT EXISTS instance_school_registry (instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE, school_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(instance_id,school_id));
+CREATE TABLE IF NOT EXISTS licenses (instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE, school_id TEXT NOT NULL, license_id TEXT NOT NULL, status TEXT NOT NULL, issued_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, grace_days INTEGER NOT NULL DEFAULT 0, metadata JSONB NOT NULL DEFAULT '{}', PRIMARY KEY(instance_id,school_id));

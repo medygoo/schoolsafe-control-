@@ -65,6 +65,10 @@ export interface ControlDatabase {
   getDevices(filters?: { status?: string; instance_id?: string }): Promise<DeviceRecord[]>;
   createDevice(device: CreateDeviceInput): Promise<DeviceRecord>;
   updateDevice(id: string, patch: Partial<DeviceRecord>): Promise<DeviceRecord | undefined>;
+  getAuthorizedSchoolIds(instanceId: string): Promise<string[]>;
+  bindInstanceSchool(instanceId: string, schoolId: string): Promise<void>;
+  getLicense(instanceId: string, schoolId: string): Promise<LicenseRecord | undefined>;
+  upsertLicense(input: CreateLicenseInput): Promise<LicenseRecord>;
 }
 
 export type CardPrintBatchStatus = "pending" | "downloaded" | "printed" | "failed";
@@ -106,3 +110,6 @@ export type DeviceRecord = {
 };
 
 export type CreateDeviceInput = Omit<DeviceRecord, "id" | "status" | "last_seen_at" | "created_at" | "updated_at">;
+
+export type LicenseRecord = { instance_id:string; school_id:string; license_id:string; status:"active"|"suspended"|"revoked"; issued_at:string; expires_at:string|null; grace_days:number; metadata:Record<string,unknown>; };
+export type CreateLicenseInput = LicenseRecord;

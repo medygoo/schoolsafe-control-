@@ -7,7 +7,7 @@ import type { ControlDatabase } from "../db/index.js";
 import type { DeviceStatus } from "../db/types.js";
 
 const registerSchema = z.object({
-  school_id: z.string().min(1),
+  school_id: z.string().min(1).optional(),
   device_code: z.string().min(2).max(64),
   vendor: z.string().min(1).max(64),
   model: z.string().min(1).max(64),
@@ -28,8 +28,11 @@ export function registerDeviceRoutes(app: FastifyInstance, db: ControlDatabase, 
   }, async (request) => {
     const instanceId = request.headers["x-schoolsafe-instance"] as string;
     const body = registerSchema.parse(request.body);
+    const authorized = await db.getAuthorizedSchoolIds(instanceId);
+    const schoolId = authorized[0];
+    if (authorized.length !== 1 || !schoolId || (body.school_id && body.school_id !== schoolId)) throw new ControlAppError(403, "PERMISSION_DENIED", "Ecole non autorisee", false);
     try {
-      const device = await db.createDevice({ instance_id: instanceId, ...body, location: body.location ?? null });
+      const device = await db.createDevice({ instance_id: instanceId, school_id: schoolId, device_code: body.device_code, vendor: body.vendor, model: body.model, serial_number: body.serial_number, location: body.location ?? null });
       return { data: device };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -9,6 +9,7 @@ import { registerCardRequestRoutes } from "./routes/card-requests.js";
 import { registerCardBatchRoutes } from "./routes/card-batches.js";
 import { registerDeviceRoutes } from "./routes/devices.js";
 import type { ControlDatabase } from "./db/index.js";
+import { registerLicenseRoutes } from "./routes/license.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -17,6 +18,7 @@ export type BuildAppOptions = {
   db: ControlDatabase;
   adminToken: string;
   testRoutes?: boolean;
+  licensePrivateKey?: string;
 };
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -45,6 +47,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerCardRequestRoutes(app, options.db, options.adminToken);
   registerCardBatchRoutes(app, options.db, options.adminToken);
   registerDeviceRoutes(app, options.db, options.adminToken);
+  registerLicenseRoutes(app, options.db, options.adminToken, options.licensePrivateKey);
 
   await app.register(fastifyStatic, {
     root: join(__dirname, "../public"),

@@ -6,7 +6,8 @@ const env = parseEnv(process.env);
 const db = createDatabase(env.DATABASE_URL);
 await db.init();
 
-const app = await buildApp({ db, adminToken: env.ADMIN_TOKEN });
+const app = await buildApp({ db, adminToken: env.ADMIN_TOKEN,
+    licensePrivateKey: process.env.LICENSE_PRIVATE_KEY });
 
 await app.listen({ host: env.HOST, port: env.PORT });
 console.log(`SchoolSafe Control App listening on http://${env.HOST}:${env.PORT}`);

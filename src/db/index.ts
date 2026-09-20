@@ -2,7 +2,7 @@ import { PostgresDatabase } from "./postgres.js";
 import { SqliteDatabase } from "./sqlite.js";
 import type { ControlDatabase } from "./types.js";
 
-export type { ControlDatabase, Instance, CardPrintRequest, CreateInstanceInput, CreateCardPrintRequestInput } from "./types.js";
+export type { ControlDatabase, Instance, CardPrintRequest, CreateInstanceInput, CreateCardPrintRequestInput, LicenseRecord, CreateLicenseInput } from "./types.js";
 
 export function createDatabase(url?: string): ControlDatabase {
   const dsn = url || process.env.DATABASE_URL || "";

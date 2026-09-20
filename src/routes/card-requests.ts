@@ -7,7 +7,7 @@ import { requireAdminToken } from "../auth/admin.js";
 import type { ControlDatabase, CardPrintRequest } from "../db/index.js";
 
 const createRequestSchema = z.object({
-  school_id: z.string().min(1),
+  school_id: z.string().min(1).optional(),
   student_id: z.string().min(1),
   student_name: z.string().min(1),
   class_name: z.string().min(1),
@@ -30,14 +30,10 @@ export function registerCardRequestRoutes(app: FastifyInstance, db: ControlDatab
   }, async (request) => {
     const instanceId = request.headers["x-schoolsafe-instance"] as string;
     const body = createRequestSchema.parse(request.body);
+    const ids = await db.getAuthorizedSchoolIds(instanceId); const schoolId=ids[0];
+    if (ids.length!==1 || !schoolId || (body.school_id && body.school_id!==schoolId)) throw new ControlAppError(403,"PERMISSION_DENIED","Ecole non autorisee",false);
     const now = new Date().toISOString();
-    const requestRecord = await db.createCardPrintRequest({
-      instance_id: instanceId,
-      ...body,
-      status: "pending",
-      created_at: now,
-      updated_at: now
-    });
+    const requestRecord = await db.createCardPrintRequest({ instance_id: instanceId, ...body, school_id: schoolId, status:"pending", created_at:now, updated_at:now });
     return { data: requestRecord };
   });
 
