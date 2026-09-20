@@ -111,5 +111,5 @@ export type DeviceRecord = {
 
 export type CreateDeviceInput = Omit<DeviceRecord, "id" | "status" | "last_seen_at" | "created_at" | "updated_at">;
 
-export type LicenseRecord = { instance_id:string; school_id:string; license_id:string; status:"active"|"suspended"|"revoked"; issued_at:string; expires_at:string|null; grace_days:number; metadata:Record<string,unknown>; };
+export type LicenseRecord = { instance_id:string; school_id:string; license_id:string; status:"active"|"suspended"|"revoked"; issued_at:string; expires_at:string; grace_days:number; metadata:Record<string,unknown>; };
 export type CreateLicenseInput = LicenseRecord;

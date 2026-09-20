@@ -1,0 +1,3 @@
+import { createPublicKey, verify } from "node:crypto"; import { z } from "zod";
+const schema=z.object({license_id:z.string().min(1),school_id:z.string().uuid(),status:z.enum(["active","suspended","revoked"]),issued_at:z.string().datetime({offset:true}),expires_at:z.string().datetime({offset:true}),grace_days:z.number().int().min(0).max(90)});
+export function verifyLicenseToken(token:string,publicKeyPem:string){const p=token.split(".");if(p.length!==2)return null;try{const b=(v:string)=>Buffer.from(v.replace(/-/g,"+").replace(/_/g,"/"),"base64");if(!verify(null,Buffer.from(p[0]),createPublicKey(publicKeyPem),b(p[1])))return null;const x=schema.safeParse(JSON.parse(b(p[0]).toString("utf8")));return x.success?x.data:null;}catch{return null;}}
