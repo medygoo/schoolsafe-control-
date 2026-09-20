@@ -128,7 +128,9 @@ describe("Control App", () => {
           supabase_url: "https://abc123.supabase.co"
         })
       });
-      return res.json().data;
+      const instance = res.json().data;
+      await db.bindInstanceSchool(instance.id, "sch-1");
+      return instance;
     }
 
     function sign(instance: { id: string; hmac_secret: string }, payload: object) {

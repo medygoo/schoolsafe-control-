@@ -6,7 +6,7 @@ import { requireAdminToken } from "../auth/admin.js";
 import type { ControlDatabase } from "../db/index.js";
 
 const createBatchSchema = z.object({
-  school_id: z.string().min(1),
+  school_id: z.string().min(1).optional(),
   batch_id: z.string().min(1).max(128),
   version: z.number().int().min(1),
   card_count: z.number().int().min(1),
@@ -26,12 +26,10 @@ export function registerCardBatchRoutes(app: FastifyInstance, db: ControlDatabas
   }, async (request) => {
     const instanceId = request.headers["x-schoolsafe-instance"] as string;
     const body = createBatchSchema.parse(request.body);
+    const ids = await db.getAuthorizedSchoolIds(instanceId); const schoolId=ids[0];
+    if (ids.length!==1 || !schoolId || (body.school_id && body.school_id!==schoolId)) throw new ControlAppError(403,"PERMISSION_DENIED","Ecole non autorisee",false);
     try {
-      const batch = await db.createCardPrintBatch({
-        instance_id: instanceId,
-        ...body,
-        status: "pending"
-      });
+      const batch = await db.createCardPrintBatch({ instance_id: instanceId, ...body, school_id: schoolId, status:"pending" });
       return { data: batch };
     } catch (err) {
       // Un lot (instance, batch_id, version) rejoué est refusé proprement.

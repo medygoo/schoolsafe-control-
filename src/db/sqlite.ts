@@ -14,7 +14,9 @@ import type {
   CardPrintBatchStatus,
   CreateCardPrintBatchInput,
   CreateInstanceInput,
-  CreateCardPrintRequestInput
+  CreateCardPrintRequestInput,
+  LicenseRecord,
+  CreateLicenseInput
 } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -285,4 +287,9 @@ export class SqliteDatabase implements ControlDatabase {
     const row = this.db.prepare("select * from devices where id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToDevice(row) : undefined;
   }
+  async getAuthorizedSchoolIds(instanceId: string): Promise<string[]> { const rows=this.db.prepare("select school_id from instance_school_registry where instance_id=? and status='active' order by school_id").all(instanceId); return rows.map((r:any)=>String(r.school_id)); }
+  async bindInstanceSchool(instanceId: string, schoolId: string): Promise<void> { this.db.prepare("insert into instance_school_registry(instance_id,school_id,status) values(?,?,?) on conflict(instance_id,school_id) do update set status='active',updated_at=current_timestamp").run(instanceId,schoolId,'active'); }
+  async getLicense(instanceId: string, schoolId: string): Promise<LicenseRecord|undefined> { const r=this.db.prepare("select * from licenses where instance_id=? and school_id=?").get(instanceId,schoolId) as any; if(!r || !r.expires_at) return undefined; return {instance_id:String(r.instance_id),school_id:String(r.school_id),license_id:String(r.license_id),status:r.status,issued_at:String(r.issued_at),expires_at:String(r.expires_at),grace_days:Number(r.grace_days),metadata:JSON.parse(String(r.metadata||'{}'))}; }
+  async upsertLicense(i: CreateLicenseInput): Promise<LicenseRecord> { this.db.prepare("insert into licenses(instance_id,school_id,license_id,status,issued_at,expires_at,grace_days,metadata) values(?,?,?,?,?,?,?,?) on conflict(instance_id,school_id) do update set license_id=excluded.license_id,status=excluded.status,issued_at=excluded.issued_at,expires_at=excluded.expires_at,grace_days=excluded.grace_days,metadata=excluded.metadata").run(i.instance_id,i.school_id,i.license_id,i.status,i.issued_at,i.expires_at,i.grace_days,JSON.stringify(i.metadata||{})); return (await this.getLicense(i.instance_id,i.school_id))!; }
+
 }

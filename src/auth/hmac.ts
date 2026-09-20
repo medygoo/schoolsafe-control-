@@ -24,6 +24,8 @@ export function verifyRequest(payload: {
   maxAgeSeconds?: number;
 }): boolean {
   const maxAge = payload.maxAgeSeconds ?? 300;
+  if (!/^\d+$/.test(String(payload.timestamp)) || !Number.isSafeInteger(payload.timestamp)) return false;
+  if (!/^[a-f0-9]{64}$/.test(payload.signature)) return false;
   const now = Math.floor(Date.now() / 1000);
   if (Math.abs(now - payload.timestamp) > maxAge) return false;
 

@@ -13,7 +13,9 @@ import type {
   CardPrintBatchStatus,
   CreateCardPrintBatchInput,
   CreateInstanceInput,
-  CreateCardPrintRequestInput
+  CreateCardPrintRequestInput,
+  LicenseRecord,
+  CreateLicenseInput
 } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -276,5 +278,10 @@ export class PostgresDatabase implements ControlDatabase {
     );
     return result.rows[0] ? this.rowToDevice(result.rows[0]) : undefined;
   }
+  async getAuthorizedSchoolIds(instanceId: string): Promise<string[]> { const r=await this.pool.query("select school_id from instance_school_registry where instance_id=$1 and status='active' order by school_id",[instanceId]); return r.rows.map((x:any)=>String(x.school_id)); }
+  async bindInstanceSchool(instanceId: string, schoolId: string): Promise<void> { await this.pool.query("insert into instance_school_registry(instance_id,school_id,status) values($1,$2,'active') on conflict(instance_id,school_id) do update set status='active',updated_at=now()",[instanceId,schoolId]); }
+  async getLicense(instanceId: string, schoolId: string): Promise<LicenseRecord|undefined> { const r=await this.pool.query("select * from licenses where instance_id=$1 and school_id=$2",[instanceId,schoolId]); const x=r.rows[0]; if(!x || !x.expires_at) return undefined; return {instance_id:String(x.instance_id),school_id:String(x.school_id),license_id:String(x.license_id),status:x.status,issued_at:new Date(x.issued_at).toISOString(),expires_at:new Date(x.expires_at).toISOString(),grace_days:Number(x.grace_days),metadata:x.metadata||{}}; }
+  async upsertLicense(i: CreateLicenseInput): Promise<LicenseRecord> { await this.pool.query("insert into licenses(instance_id,school_id,license_id,status,issued_at,expires_at,grace_days,metadata) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict(instance_id,school_id) do update set license_id=excluded.license_id,status=excluded.status,issued_at=excluded.issued_at,expires_at=excluded.expires_at,grace_days=excluded.grace_days,metadata=excluded.metadata",[i.instance_id,i.school_id,i.license_id,i.status,i.issued_at,i.expires_at,i.grace_days,i.metadata||{}]); return (await this.getLicense(i.instance_id,i.school_id))!; }
+
 }
 

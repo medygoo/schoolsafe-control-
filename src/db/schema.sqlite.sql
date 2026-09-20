@@ -90,3 +90,6 @@ CREATE TABLE IF NOT EXISTS devices (
 
 CREATE INDEX IF NOT EXISTS idx_devices_instance_id ON devices(instance_id);
 CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
+
+CREATE TABLE IF NOT EXISTS instance_school_registry (instance_id TEXT NOT NULL, school_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(instance_id,school_id));
+CREATE TABLE IF NOT EXISTS licenses (instance_id TEXT NOT NULL, school_id TEXT NOT NULL, license_id TEXT NOT NULL, status TEXT NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT, grace_days INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(instance_id,school_id));
