@@ -13,6 +13,29 @@ concurrency:
   group: control-production-deploy
   cancel-in-progress: false
 jobs:
+  infra4_validate_only:
+    if: startsWith(github.ref, 'refs/heads/infra/ci-dry-run-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout production history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: production
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate requested SHA
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ inputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$COMMIT_SHA" origin/production
+          successful_runs="$(
+            gh api -H 'Accept: application/vnd.github+json' "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=production&event=push&head_sha=${COMMIT_SHA}&status=success&per_page=1" --jq '.total_count'
+          )"
+          test "$successful_runs" -ge 1
   deploy:
     if: github.ref == 'refs/heads/production' && vars.CONTROL_DEPLOY_ENABLED == 'true'
     environment: production
