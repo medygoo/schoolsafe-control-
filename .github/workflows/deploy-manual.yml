@@ -1,0 +1,68 @@
+name: Deploy manually after production approval
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Validated full production commit SHA
+        required: true
+        type: string
+permissions:
+  contents: read
+  checks: read
+concurrency:
+  group: control-production-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/production' && vars.CONTROL_DEPLOY_ENABLED == 'true'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout production history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: production
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate requested SHA
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ inputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$COMMIT_SHA" origin/production
+          successful_checks="$(
+            gh api -H 'Accept: application/vnd.github+json' "/repos/${GITHUB_REPOSITORY}/commits/${COMMIT_SHA}/check-runs" --jq '[.check_runs[] | select(.name == "test" and .conclusion == "success")] | length'
+          )"
+          test "$successful_checks" -ge 1
+      - name: Invoke restricted VPS deployer
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ inputs.sha }}
+          DEPLOY_KEY: ${{ secrets.CONTROL_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.CONTROL_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test -n "$DEPLOY_KEY"
+          test -n "$KNOWN_HOSTS"
+          key_file="$(mktemp)"
+          hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$hosts_file"' EXIT
+          printf '%s\n' "$DEPLOY_KEY" > "$key_file"
+          printf '%s\n' "$KNOWN_HOSTS" > "$hosts_file"
+          chmod 600 "$key_file" "$hosts_file"
+          deploy_output="$(
+            ssh -i "$key_file" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$hosts_file" schoolsafe-deploy@179.198.195.15 "sudo /usr/local/sbin/deploy-schoolsafe-control '$COMMIT_SHA'"
+          )"
+          printf '%s\n' "$deploy_output"
+          grep -Fqx "control deployed successfully at $COMMIT_SHA" <<<"$deploy_output"
+          {
+            echo "### Control production deployment"
+            echo "- Requested SHA: \`$COMMIT_SHA\`"
+            echo "- Confirmed deployed SHA: \`$COMMIT_SHA\`"
+            echo "- Remote account: \`schoolsafe-deploy\`"
+          } >> "$GITHUB_STEP_SUMMARY"
