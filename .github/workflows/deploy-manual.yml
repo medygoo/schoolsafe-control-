@@ -8,7 +8,7 @@ on:
         type: string
 permissions:
   contents: read
-  checks: read
+  actions: read
 concurrency:
   group: control-production-deploy
   cancel-in-progress: false
@@ -34,10 +34,10 @@ jobs:
           set -euo pipefail
           [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
           git merge-base --is-ancestor "$COMMIT_SHA" origin/production
-          successful_checks="$(
-            gh api -H 'Accept: application/vnd.github+json' "/repos/${GITHUB_REPOSITORY}/commits/${COMMIT_SHA}/check-runs" --jq '[.check_runs[] | select(.name == "test" and .conclusion == "success")] | length'
+          successful_runs="$(
+            gh api -H 'Accept: application/vnd.github+json' "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=production&event=push&head_sha=${COMMIT_SHA}&status=success&per_page=1" --jq '.total_count'
           )"
-          test "$successful_checks" -ge 1
+          test "$successful_runs" -ge 1
       - name: Invoke restricted VPS deployer
         shell: bash
         env:
