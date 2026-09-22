@@ -41,7 +41,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   app.get("/health", async () => ({ status: "ok" as const }));
 
-  app.get("/ready", async () => ({ status: "ready" as const }));
+  app.get("/ready", async (_request, reply) => {
+    try {
+      await options.db.ping();
+      return { status: "ready" as const };
+    } catch {
+      return reply.status(503).send({ status: "not_ready" as const });
+    }
+  });
 
   registerInstanceRoutes(app, options.db, options.adminToken);
   registerCardRequestRoutes(app, options.db, options.adminToken);

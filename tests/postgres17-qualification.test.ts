@@ -59,6 +59,7 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
   const zeroDatabase = `control_v1_zero_${runId}`;
   const migrationDatabase = `control_v1_migration_${runId}`;
   const equivalenceDatabase = `control_v1_equivalence_${runId}`;
+  const readinessDatabase = `control_v1_readiness_${runId}`;
 
   // Clients and DB instances are only created when tests run
   let adminClient: InstanceType<typeof pg.Client>;
@@ -72,7 +73,7 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
     await adminClient.connect();
     serverVersion = (await adminClient.query<{ version: string }>("SELECT version() AS version")).rows[0].version;
 
-    for (const database of [zeroDatabase, migrationDatabase, equivalenceDatabase]) {
+    for (const database of [zeroDatabase, migrationDatabase, equivalenceDatabase, readinessDatabase]) {
       await adminClient.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)} WITH (FORCE)`);
       await adminClient.query(`CREATE DATABASE ${quoteIdentifier(database)}`);
     }
@@ -82,14 +83,14 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
     zeroApp = await buildApp({ db: zeroDb, adminToken: ADMIN_TOKEN, testRoutes: true });
 
     console.info(`[pg17] version=${serverVersion}`);
-    console.info(`[pg17] temporary_databases=${zeroDatabase},${migrationDatabase},${equivalenceDatabase}`);
+    console.info(`[pg17] temporary_databases=${zeroDatabase},${migrationDatabase},${equivalenceDatabase},${readinessDatabase}`);
   }, 30_000);
 
   afterAll(async () => {
     if (zeroApp) await zeroApp.close();
     if (zeroDb) await zeroDb.close();
     if (adminClient) {
-      for (const database of [zeroDatabase, migrationDatabase, equivalenceDatabase]) {
+      for (const database of [zeroDatabase, migrationDatabase, equivalenceDatabase, readinessDatabase]) {
         await adminClient.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)} WITH (FORCE)`);
       }
       await adminClient.end();
@@ -289,6 +290,27 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
       console.info(`[pg17] catalog_equivalence_tables=${freshCatalog.tables.length}`);
     } finally {
       await Promise.all([freshClient.end(), migratedClient.end()]);
+    }
+  });
+
+  it("reports PostgreSQL readiness without weakening process liveness", async () => {
+    const readinessDb = new PostgresDatabase(connectionString(readinessDatabase));
+    await readinessDb.init();
+    const readinessApp = await buildApp({ db: readinessDb, adminToken: ADMIN_TOKEN, testRoutes: true });
+    try {
+      const available = await readinessApp.inject({ method: "GET", url: "/ready" });
+      expect(available.statusCode).toBe(200);
+      expect(available.json()).toEqual({ status: "ready" });
+
+      await readinessDb.close();
+      const unavailable = await readinessApp.inject({ method: "GET", url: "/ready" });
+      expect(unavailable.statusCode).toBe(503);
+      expect(unavailable.json()).toEqual({ status: "not_ready" });
+      const live = await readinessApp.inject({ method: "GET", url: "/health" });
+      expect(live.statusCode).toBe(200);
+      console.info("[pg17] readiness=200,503 liveness_after_db_loss=200");
+    } finally {
+      await readinessApp.close();
     }
   });
 
