@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import { SqliteDatabase } from "../src/db/sqlite.js";
 import { signRequest } from "../src/auth/hmac.js";
@@ -39,6 +39,20 @@ describe("Control App", () => {
       const res = await app.inject({ method: "GET", url: "/ready" });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ status: "ready" });
+    });
+
+    it("returns generic 503 readiness while liveness remains healthy when the database is unavailable", async () => {
+      vi.spyOn(db, "ping").mockRejectedValue(new Error("postgresql://user:secret@db/control"));
+      const app = await makeApp(db);
+
+      const ready = await app.inject({ method: "GET", url: "/ready" });
+      expect(ready.statusCode).toBe(503);
+      expect(ready.json()).toEqual({ status: "not_ready" });
+      expect(ready.body).not.toContain("secret");
+
+      const health = await app.inject({ method: "GET", url: "/health" });
+      expect(health.statusCode).toBe(200);
+      expect(health.json()).toEqual({ status: "ok" });
     });
   });
 

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { PostgresDatabase } from "../src/db/postgres.js";
 import type { Instance, InstanceStatus } from "../src/db/types.js";
+import { readNormalizedPostgresCatalog } from "./helpers/postgres-catalog.js";
 
 const enabled = process.env.CONTROL_PG17_QUALIFY === "1";
 const describePg17 = enabled ? describe : describe.skip;
@@ -57,6 +58,8 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
   const slugRunId = runId.replaceAll("_", "-");
   const zeroDatabase = `control_v1_zero_${runId}`;
   const migrationDatabase = `control_v1_migration_${runId}`;
+  const equivalenceDatabase = `control_v1_equivalence_${runId}`;
+  const readinessDatabase = `control_v1_readiness_${runId}`;
 
   // Clients and DB instances are only created when tests run
   let adminClient: InstanceType<typeof pg.Client>;
@@ -70,7 +73,7 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
     await adminClient.connect();
     serverVersion = (await adminClient.query<{ version: string }>("SELECT version() AS version")).rows[0].version;
 
-    for (const database of [zeroDatabase, migrationDatabase]) {
+    for (const database of [zeroDatabase, migrationDatabase, equivalenceDatabase, readinessDatabase]) {
       await adminClient.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)} WITH (FORCE)`);
       await adminClient.query(`CREATE DATABASE ${quoteIdentifier(database)}`);
     }
@@ -80,15 +83,15 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
     zeroApp = await buildApp({ db: zeroDb, adminToken: ADMIN_TOKEN, testRoutes: true });
 
     console.info(`[pg17] version=${serverVersion}`);
-    console.info(`[pg17] temporary_databases=${zeroDatabase},${migrationDatabase}`);
+    console.info(`[pg17] temporary_databases=${zeroDatabase},${migrationDatabase},${equivalenceDatabase},${readinessDatabase}`);
   }, 30_000);
 
   afterAll(async () => {
     if (zeroApp) await zeroApp.close();
     if (zeroDb) await zeroDb.close();
     if (adminClient) {
-      for (const database of [zeroDatabase, migrationDatabase]) {
-        await adminClient.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)} WITH (FORCE)`);
+      for (const database of [zeroDatabase, migrationDatabase, equivalenceDatabase, readinessDatabase]) {
+        await adminClient.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)}`);
       }
       await adminClient.end();
     }
@@ -136,6 +139,35 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
     const stored = await zeroDb.getInstanceById(instance.id);
     expect(stored?.setup_token).toBeNull();
     expect(stored?.status).toBe("trial");
+
+    const schoolId = "11111111-1111-4111-8111-111111111111";
+    await zeroDb.bindInstanceSchool(instance.id, schoolId);
+    const device = await zeroDb.createDevice({
+      instance_id: instance.id,
+      school_id: schoolId,
+      device_code: "P0-FRESH-DEVICE",
+      vendor: "P0 Vendor",
+      model: "P0 Model",
+      serial_number: `p0-fresh-${runId}`,
+      location: "P0 Lab"
+    });
+    const storedDevices = await zeroDb.getDevices({ instance_id: instance.id });
+    expect(storedDevices).toHaveLength(1);
+    expect({
+      instance_id: storedDevices[0].instance_id,
+      school_id: storedDevices[0].school_id,
+      device_code: storedDevices[0].device_code,
+      vendor: storedDevices[0].vendor,
+      model: storedDevices[0].model,
+      serial_number: storedDevices[0].serial_number
+    }).toEqual({
+      instance_id: device.instance_id,
+      school_id: schoolId,
+      device_code: "P0-FRESH-DEVICE",
+      vendor: "P0 Vendor",
+      model: "P0 Model",
+      serial_number: `p0-fresh-${runId}`
+    });
   });
 
   it("migrates the production schema without losing tables or witness data", async () => {
@@ -240,6 +272,46 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
       .rejects.toMatchObject({ code: "23514" });
     console.info(`[pg17] migration_row_counts=${JSON.stringify(countsBefore)}`);
     await client.end();
+  });
+
+  it("keeps fresh and fully migrated PostgreSQL schemas structurally equivalent", async () => {
+    const freshClient = new pg.Client({ connectionString: connectionString(zeroDatabase) });
+    const migratedClient = new pg.Client({ connectionString: connectionString(equivalenceDatabase) });
+    await Promise.all([freshClient.connect(), migratedClient.connect()]);
+    try {
+      const legacySchema = await readFile(resolve("tests/fixtures/control-production-schema.sql"), "utf8");
+      const migration = await readFile(resolve("src/db/migration.sql"), "utf8");
+      await migratedClient.query(legacySchema);
+      await migratedClient.query(migration);
+
+      const freshCatalog = await readNormalizedPostgresCatalog(freshClient);
+      const migratedCatalog = await readNormalizedPostgresCatalog(migratedClient);
+      expect(migratedCatalog).toEqual(freshCatalog);
+      console.info(`[pg17] catalog_equivalence_tables=${freshCatalog.tables.length}`);
+    } finally {
+      await Promise.all([freshClient.end(), migratedClient.end()]);
+    }
+  });
+
+  it("reports PostgreSQL readiness without weakening process liveness", async () => {
+    const readinessDb = new PostgresDatabase(connectionString(readinessDatabase));
+    await readinessDb.init();
+    const readinessApp = await buildApp({ db: readinessDb, adminToken: ADMIN_TOKEN, testRoutes: true });
+    try {
+      const available = await readinessApp.inject({ method: "GET", url: "/ready" });
+      expect(available.statusCode).toBe(200);
+      expect(available.json()).toEqual({ status: "ready" });
+
+      await readinessDb.close();
+      const unavailable = await readinessApp.inject({ method: "GET", url: "/ready" });
+      expect(unavailable.statusCode).toBe(503);
+      expect(unavailable.json()).toEqual({ status: "not_ready" });
+      const live = await readinessApp.inject({ method: "GET", url: "/health" });
+      expect(live.statusCode).toBe(200);
+      console.info("[pg17] readiness=200,503 liveness_after_db_loss=200");
+    } finally {
+      await readinessApp.close();
+    }
   });
 
   it("executes all lifecycle transitions against PostgreSQL 17", async () => {

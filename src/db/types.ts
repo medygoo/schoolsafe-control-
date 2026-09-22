@@ -45,6 +45,7 @@ export type CreateCardPrintRequestInput = Omit<CardPrintRequest, "id" | "printed
 
 export interface ControlDatabase {
   init(): Promise<void>;
+  ping(): Promise<void>;
   close(): Promise<void>;
   reset?(): Promise<void>;
 

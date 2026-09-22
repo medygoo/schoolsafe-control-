@@ -25,5 +25,6 @@ ALTER TABLE instances ADD CONSTRAINT instances_status_check CHECK (status IN ('t
 ALTER TABLE instances ALTER COLUMN status SET DEFAULT 'trial';
 
 -- 5. Ensure indexes exist
+CREATE INDEX IF NOT EXISTS idx_instances_slug ON instances(school_slug);
 CREATE INDEX IF NOT EXISTS idx_instances_setup_token ON instances(setup_token);
 CREATE INDEX IF NOT EXISTS idx_instances_status ON instances(status);

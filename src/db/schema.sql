@@ -5,7 +5,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Core Instances with Trial/Grace lifecycle
 CREATE TABLE IF NOT EXISTS instances (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   school_name TEXT NOT NULL,
   school_slug TEXT NOT NULL UNIQUE,
   domain TEXT NOT NULL,
@@ -22,13 +22,14 @@ CREATE TABLE IF NOT EXISTS instances (
 );
 
 CREATE INDEX IF NOT EXISTS idx_instances_slug ON instances(school_slug);
-CREATE INDEX IF NOT EXISTS idx_instances_setup_token ON instances(setup_token) WHERE setup_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_instances_setup_token ON instances(setup_token);
 CREATE INDEX IF NOT EXISTS idx_instances_status ON instances(status);
 
 -- Device Hub: Master hardware registry
 CREATE TABLE IF NOT EXISTS devices (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+  school_id TEXT NOT NULL,
   device_code TEXT NOT NULL,
   vendor TEXT NOT NULL,
   model TEXT NOT NULL,
@@ -46,7 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
 
 -- Card Print Requests
 CREATE TABLE IF NOT EXISTS card_print_requests (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
   school_id TEXT NOT NULL,
   student_id TEXT NOT NULL,
@@ -72,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_cpr_created_at ON card_print_requests(created_at 
 
 -- Admin Sessions
 CREATE TABLE IF NOT EXISTS admin_sessions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   token_hash TEXT NOT NULL UNIQUE,
   label TEXT NOT NULL DEFAULT 'admin',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -83,7 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(token_hash
 
 -- Card Print Batches (ZIP lots)
 CREATE TABLE IF NOT EXISTS card_print_batches (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
   school_id TEXT NOT NULL,
   batch_id TEXT NOT NULL,

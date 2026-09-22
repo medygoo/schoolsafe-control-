@@ -2,6 +2,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
+import { ZodError } from "zod";
 import { ControlAppError, type ApiErrorBody } from "./http/errors.js";
 import { newRequestId } from "./http/request-id.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
@@ -27,21 +28,29 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.setErrorHandler((error, _request, reply) => {
     const requestId = newRequestId();
     const known = error instanceof ControlAppError;
-    if (!known) {
+    const validation = error instanceof ZodError;
+    if (!known && !validation) {
       console.error("[ERROR]", error);
     }
     const body: ApiErrorBody = {
-      code: known ? error.code : "INTERNAL_ERROR",
-      message: known ? error.publicMessage : "Erreur interne",
+      code: known ? error.code : validation ? "VALIDATION_INVALID" : "INTERNAL_ERROR",
+      message: known ? error.publicMessage : validation ? "Donnée invalide" : "Erreur interne",
       request_id: requestId,
       retryable: known ? error.retryable : false
     };
-    reply.status(known ? error.statusCode : 500).send(body);
+    reply.status(known ? error.statusCode : validation ? 400 : 500).send(body);
   });
 
   app.get("/health", async () => ({ status: "ok" as const }));
 
-  app.get("/ready", async () => ({ status: "ready" as const }));
+  app.get("/ready", async (_request, reply) => {
+    try {
+      await options.db.ping();
+      return { status: "ready" as const };
+    } catch {
+      return reply.status(503).send({ status: "not_ready" as const });
+    }
+  });
 
   registerInstanceRoutes(app, options.db, options.adminToken);
   registerCardRequestRoutes(app, options.db, options.adminToken);

@@ -78,6 +78,10 @@ export class SqliteDatabase implements ControlDatabase {
     this.db.exec(schema);
   }
 
+  async ping(): Promise<void> {
+    this.db.prepare("SELECT 1").get();
+  }
+
   async close(): Promise<void> {
     this.db.close();
   }
