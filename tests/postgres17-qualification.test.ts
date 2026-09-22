@@ -91,7 +91,7 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
     if (zeroDb) await zeroDb.close();
     if (adminClient) {
       for (const database of [zeroDatabase, migrationDatabase, equivalenceDatabase, readinessDatabase]) {
-        await adminClient.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)} WITH (FORCE)`);
+        await adminClient.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)}`);
       }
       await adminClient.end();
     }

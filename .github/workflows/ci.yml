@@ -14,6 +14,19 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.11-bookworm
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: control-ci-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -25,5 +38,12 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+        env:
+          CONTROL_PG17_QUALIFY: "1"
+          CONTROL_PG17_RUN_ID: "ci_${{ github.run_id }}_${{ github.run_attempt }}"
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: control-ci-test
       - run: npm run build
       - run: docker build -t schoolsafe-control-ci .
