@@ -1,4 +1,4 @@
-export type InstanceStatus = "active" | "blocked";
+export type InstanceStatus = "trial" | "grace" | "active" | "suspended" | "blocked";
 
 export type Instance = {
   id: string;
@@ -8,8 +8,11 @@ export type Instance = {
   api_base: string;
   supabase_url: string;
   status: InstanceStatus;
-  setup_token: string;
+  setup_token: string | null;
   hmac_secret: string;
+  trial_started_at: string | null;
+  grace_ends_at: string | null;
+  activated_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -51,6 +54,13 @@ export interface ControlDatabase {
   getInstanceBySetupToken(token: string): Promise<Instance | undefined>;
   createInstance(instance: CreateInstanceInput): Promise<Instance>;
   updateInstance(id: string, patch: Partial<Instance>): Promise<Instance | undefined>;
+
+  // Trial/Grace management
+  startTrial(instanceId: string): Promise<Instance | undefined>;
+  consumeSetupToken(token: string): Promise<Instance | undefined>;
+  activateInstance(instanceId: string): Promise<Instance | undefined>;
+  suspendInstance(instanceId: string): Promise<Instance | undefined>;
+  checkAndExpireTrials(): Promise<void>;
 
   getCardPrintRequests(filters?: { status?: string; instance_id?: string }): Promise<CardPrintRequest[]>;
   getCardPrintRequestById(id: string): Promise<CardPrintRequest | undefined>;

@@ -1,0 +1,10 @@
+[Unit]
+Description=SchoolSafe Control Trial Expiration Check
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/schoolsafe-control/env
+ExecStart=/usr/bin/curl --fail-with-body --silent --show-error --request POST ${CONTROL_API_URL}/instances/check-expired-trials --header "x-admin-token: ${ADMIN_TOKEN}"
+User=schoolsafe
+Group=schoolsafe

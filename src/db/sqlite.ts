@@ -31,8 +31,11 @@ function rowToInstance(row: Record<string, unknown>): Instance {
     api_base: String(row.api_base),
     supabase_url: String(row.supabase_url),
     status: String(row.status) as Instance["status"],
-    setup_token: String(row.setup_token),
+    setup_token: row.setup_token ? String(row.setup_token) : null,
     hmac_secret: String(row.hmac_secret),
+    trial_started_at: row.trial_started_at ? String(row.trial_started_at) : null,
+    grace_ends_at: row.grace_ends_at ? String(row.grace_ends_at) : null,
+    activated_at: row.activated_at ? String(row.activated_at) : null,
     created_at: String(row.created_at),
     updated_at: String(row.updated_at)
   };
@@ -106,11 +109,13 @@ export class SqliteDatabase implements ControlDatabase {
   async createInstance(input: CreateInstanceInput): Promise<Instance> {
     const id = crypto.randomUUID();
     const sql = `INSERT INTO instances
-      (id, school_name, school_slug, domain, api_base, supabase_url, status, setup_token, hmac_secret, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`;
+      (id, school_name, school_slug, domain, api_base, supabase_url, status, setup_token, hmac_secret, trial_started_at, grace_ends_at, activated_at, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
     this.db.prepare(sql).run(
       id, input.school_name, input.school_slug, input.domain, input.api_base, input.supabase_url,
-      input.status, input.setup_token, input.hmac_secret, input.created_at, input.updated_at
+      input.status, input.setup_token, input.hmac_secret,
+      input.trial_started_at, input.grace_ends_at, input.activated_at,
+      input.created_at, input.updated_at
     );
     return (await this.getInstanceById(id))!;
   }
@@ -122,11 +127,12 @@ export class SqliteDatabase implements ControlDatabase {
     this.db.prepare(
       `UPDATE instances SET
         school_name = ?, school_slug = ?, domain = ?, api_base = ?, supabase_url = ?,
-        status = ?, setup_token = ?, hmac_secret = ?, updated_at = ?
+        status = ?, setup_token = ?, hmac_secret = ?, trial_started_at = ?, grace_ends_at = ?, activated_at = ?, updated_at = ?
        WHERE id = ?`
     ).run(
       next.school_name, next.school_slug, next.domain, next.api_base, next.supabase_url,
-      next.status, next.setup_token, next.hmac_secret, next.updated_at, id
+      next.status, next.setup_token, next.hmac_secret,
+      next.trial_started_at, next.grace_ends_at, next.activated_at, next.updated_at, id
     );
     return this.getInstanceById(id);
   }
@@ -291,5 +297,58 @@ export class SqliteDatabase implements ControlDatabase {
   async bindInstanceSchool(instanceId: string, schoolId: string): Promise<void> { this.db.prepare("insert into instance_school_registry(instance_id,school_id,status) values(?,?,?) on conflict(instance_id,school_id) do update set status='active',updated_at=current_timestamp").run(instanceId,schoolId,'active'); }
   async getLicense(instanceId: string, schoolId: string): Promise<LicenseRecord|undefined> { const r=this.db.prepare("select * from licenses where instance_id=? and school_id=?").get(instanceId,schoolId) as any; if(!r || !r.expires_at) return undefined; return {instance_id:String(r.instance_id),school_id:String(r.school_id),license_id:String(r.license_id),status:r.status,issued_at:String(r.issued_at),expires_at:String(r.expires_at),grace_days:Number(r.grace_days),metadata:JSON.parse(String(r.metadata||'{}'))}; }
   async upsertLicense(i: CreateLicenseInput): Promise<LicenseRecord> { this.db.prepare("insert into licenses(instance_id,school_id,license_id,status,issued_at,expires_at,grace_days,metadata) values(?,?,?,?,?,?,?,?) on conflict(instance_id,school_id) do update set license_id=excluded.license_id,status=excluded.status,issued_at=excluded.issued_at,expires_at=excluded.expires_at,grace_days=excluded.grace_days,metadata=excluded.metadata").run(i.instance_id,i.school_id,i.license_id,i.status,i.issued_at,i.expires_at,i.grace_days,JSON.stringify(i.metadata||{})); return (await this.getLicense(i.instance_id,i.school_id))!; }
+
+  // ————— Trial / Grace management —————
+
+  async startTrial(instanceId: string): Promise<Instance | undefined> {
+    const now = new Date();
+    const trialEnds = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const graceEnds = new Date(trialEnds.getTime() + 3 * 24 * 60 * 60 * 1000);
+
+    this.db.prepare(
+      "UPDATE instances SET status = 'trial', trial_started_at = ?, grace_ends_at = ?, updated_at = ? WHERE id = ?"
+    ).run(now.toISOString(), graceEnds.toISOString(), now.toISOString(), instanceId);
+
+    return this.getInstanceById(instanceId);
+  }
+
+  async consumeSetupToken(token: string): Promise<Instance | undefined> {
+    // Atomic consumption with state validation: only trial or grace allowed, and grace must not be expired.
+    const row = this.db.prepare(
+      "UPDATE instances SET setup_token = NULL, updated_at = ? WHERE setup_token = ? AND status IN ('trial', 'grace') AND (status != 'grace' OR datetime(grace_ends_at) > datetime('now')) RETURNING *"
+    ).get(new Date().toISOString(), token) as Record<string, unknown> | undefined;
+    return row ? rowToInstance(row) : undefined;
+  }
+
+  async activateInstance(instanceId: string): Promise<Instance | undefined> {
+    const now = new Date().toISOString();
+    this.db.prepare(
+      "UPDATE instances SET status = 'active', activated_at = ?, setup_token = NULL, updated_at = ? WHERE id = ?"
+    ).run(now, now, instanceId);
+    return this.getInstanceById(instanceId);
+  }
+
+  async suspendInstance(instanceId: string): Promise<Instance | undefined> {
+    const now = new Date().toISOString();
+    this.db.prepare(
+      "UPDATE instances SET status = 'suspended', updated_at = ? WHERE id = ?"
+    ).run(now, instanceId);
+
+    return this.getInstanceById(instanceId);
+  }
+
+  async checkAndExpireTrials(): Promise<void> {
+    const now = new Date().toISOString();
+
+    // Expire trials that have passed their 14-day period into grace
+    this.db.prepare(
+      "UPDATE instances SET status = 'grace', updated_at = ? WHERE status = 'trial' AND datetime(trial_started_at, '+14 days') <= ?"
+    ).run(now, now);
+
+    // Suspend instances in grace period that have expired
+    this.db.prepare(
+      "UPDATE instances SET status = 'suspended', updated_at = ? WHERE status = 'grace' AND grace_ends_at <= ?"
+    ).run(now, now);
+  }
 
 }

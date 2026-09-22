@@ -67,7 +67,7 @@ describe("Control App", () => {
       expect(create.statusCode).toBe(200);
       const instance = create.json().data;
       expect(instance.school_name).toBe("École du Sage");
-      expect(instance.status).toBe("active");
+      expect(instance.status).toBe("trial");
       expect(instance.setup_token).toHaveLength(64);
       expect(instance.hmac_secret).toHaveLength(64);
 

@@ -5,11 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SchoolSafe Control — App centrale</title>
   <link rel="stylesheet" href="/styles.css">
-  <link rel="icon" type="image/png" href="/logo.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon.png">
+
+  <!-- Apple Touch Icon -->
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+
+  <!-- Web Manifest -->
+  <link rel="manifest" href="/manifest.json">
+
+  <!-- Theme Color -->
+  <meta name="theme-color" content="#0b1a3a">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><img src="/logo.png" alt="SchoolSafe"><span>SchoolSafe <strong>Control</strong></span></div>
+    <div class="brand">
+      <img src="/logo.png" alt="SchoolSafe Control Logo" width="32" height="32">
+      <span>SchoolSafe <strong>Control</strong></span>
+    </div>
     <div class="auth" id="authSection">
       <input type="password" id="adminToken" placeholder="Token admin" autocomplete="off">
       <button id="loginBtn" type="button">Connexion</button>

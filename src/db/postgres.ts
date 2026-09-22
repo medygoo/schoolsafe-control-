@@ -32,8 +32,11 @@ function rowToInstance(row: Record<string, unknown>): Instance {
     api_base: String(row.api_base),
     supabase_url: String(row.supabase_url),
     status: String(row.status) as Instance["status"],
-    setup_token: String(row.setup_token),
+    setup_token: row.setup_token ? String(row.setup_token) : null,
     hmac_secret: String(row.hmac_secret),
+    trial_started_at: row.trial_started_at ? String(row.trial_started_at) : null,
+    grace_ends_at: row.grace_ends_at ? String(row.grace_ends_at) : null,
+    activated_at: row.activated_at ? String(row.activated_at) : null,
     created_at: String(row.created_at),
     updated_at: String(row.updated_at)
   };
@@ -103,11 +106,13 @@ export class PostgresDatabase implements ControlDatabase {
   async createInstance(input: CreateInstanceInput): Promise<Instance> {
     const result = await this.pool.query(
       `INSERT INTO instances
-       (school_name, school_slug, domain, api_base, supabase_url, status, setup_token, hmac_secret, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       (school_name, school_slug, domain, api_base, supabase_url, status, setup_token, hmac_secret, trial_started_at, grace_ends_at, activated_at, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING *`,
       [input.school_name, input.school_slug, input.domain, input.api_base, input.supabase_url,
-       input.status, input.setup_token, input.hmac_secret, input.created_at, input.updated_at]
+       input.status, input.setup_token, input.hmac_secret,
+       input.trial_started_at, input.grace_ends_at, input.activated_at,
+       input.created_at, input.updated_at]
     );
     return rowToInstance(result.rows[0]);
   }
@@ -119,10 +124,11 @@ export class PostgresDatabase implements ControlDatabase {
     const result = await this.pool.query(
       `UPDATE instances SET
         school_name = $1, school_slug = $2, domain = $3, api_base = $4, supabase_url = $5,
-        status = $6, setup_token = $7, hmac_secret = $8, updated_at = $9
-       WHERE id = $10 RETURNING *`,
+        status = $6, setup_token = $7, hmac_secret = $8, trial_started_at = $9, grace_ends_at = $10, activated_at = $11, updated_at = $12
+       WHERE id = $13 RETURNING *`,
       [next.school_name, next.school_slug, next.domain, next.api_base, next.supabase_url,
-       next.status, next.setup_token, next.hmac_secret, next.updated_at, id]
+       next.status, next.setup_token, next.hmac_secret,
+       next.trial_started_at, next.grace_ends_at, next.activated_at, next.updated_at, id]
     );
     return result.rows[0] ? rowToInstance(result.rows[0]) : undefined;
   }
@@ -282,6 +288,57 @@ export class PostgresDatabase implements ControlDatabase {
   async bindInstanceSchool(instanceId: string, schoolId: string): Promise<void> { await this.pool.query("insert into instance_school_registry(instance_id,school_id,status) values($1,$2,'active') on conflict(instance_id,school_id) do update set status='active',updated_at=now()",[instanceId,schoolId]); }
   async getLicense(instanceId: string, schoolId: string): Promise<LicenseRecord|undefined> { const r=await this.pool.query("select * from licenses where instance_id=$1 and school_id=$2",[instanceId,schoolId]); const x=r.rows[0]; if(!x || !x.expires_at) return undefined; return {instance_id:String(x.instance_id),school_id:String(x.school_id),license_id:String(x.license_id),status:x.status,issued_at:new Date(x.issued_at).toISOString(),expires_at:new Date(x.expires_at).toISOString(),grace_days:Number(x.grace_days),metadata:x.metadata||{}}; }
   async upsertLicense(i: CreateLicenseInput): Promise<LicenseRecord> { await this.pool.query("insert into licenses(instance_id,school_id,license_id,status,issued_at,expires_at,grace_days,metadata) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict(instance_id,school_id) do update set license_id=excluded.license_id,status=excluded.status,issued_at=excluded.issued_at,expires_at=excluded.expires_at,grace_days=excluded.grace_days,metadata=excluded.metadata",[i.instance_id,i.school_id,i.license_id,i.status,i.issued_at,i.expires_at,i.grace_days,i.metadata||{}]); return (await this.getLicense(i.instance_id,i.school_id))!; }
+
+  // ————— Trial / Grace management —————
+  async startTrial(instanceId: string): Promise<Instance | undefined> {
+    const now = new Date();
+    const trialEnds = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const graceEnds = new Date(trialEnds.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const result = await this.pool.query(
+      "UPDATE instances SET status = 'trial', trial_started_at = $1, grace_ends_at = $2, updated_at = $3 WHERE id = $4 RETURNING *",
+      [now.toISOString(), graceEnds.toISOString(), now.toISOString(), instanceId]
+    );
+    return result.rows[0] ? rowToInstance(result.rows[0]) : undefined;
+  }
+
+  async consumeSetupToken(token: string): Promise<Instance | undefined> {
+// Atomic consumption with state validation: only trial or grace allowed, and grace must not be expired.
+const result = await this.pool.query(
+"UPDATE instances SET setup_token = NULL, updated_at = NOW() WHERE setup_token = $1 AND status IN ('trial', 'grace') AND (status != 'grace' OR grace_ends_at > NOW()) RETURNING *",
+[token]
+);
+return result.rows[0] ? rowToInstance(result.rows[0]) : undefined;
+}
+
+async activateInstance(instanceId: string): Promise<Instance | undefined> {
+    const now = new Date().toISOString();
+    const result = await this.pool.query(
+      "UPDATE instances SET status = 'active', activated_at = $1, setup_token = NULL, updated_at = $2 WHERE id = $3 RETURNING *",
+      [now, now, instanceId]
+    );
+    return result.rows[0] ? rowToInstance(result.rows[0]) : undefined;
+  }
+
+  async suspendInstance(instanceId: string): Promise<Instance | undefined> {
+    const now = new Date().toISOString();
+    const result = await this.pool.query(
+      "UPDATE instances SET status = 'suspended', updated_at = $1 WHERE id = $2 RETURNING *",
+      [now, instanceId]
+    );
+    return result.rows[0] ? rowToInstance(result.rows[0]) : undefined;
+  }
+
+  async checkAndExpireTrials(): Promise<void> {
+    const now = new Date().toISOString();
+    // Expire trials that have passed their 14-day period into grace
+    await this.pool.query(
+      "UPDATE instances SET status = 'grace', updated_at = $1 WHERE status = 'trial' AND trial_started_at <= NOW() - INTERVAL '14 days'"
+    , [now]);
+    // Suspend instances in grace period that have expired
+    await this.pool.query(
+      "UPDATE instances SET status = 'suspended', updated_at = $1 WHERE status = 'grace' AND grace_ends_at <= NOW()"
+    , [now]);
+  }
 
 }
 
