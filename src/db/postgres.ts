@@ -130,10 +130,11 @@ export class PostgresDatabase implements ControlDatabase {
     const result = await this.pool.query(
       `UPDATE instances SET
         school_name = $1, school_slug = $2, domain = $3, api_base = $4, supabase_url = $5,
-        status = $6, setup_token = $7, hmac_secret = $8, trial_started_at = $9, grace_ends_at = $10, activated_at = $11, updated_at = $12
-       WHERE id = $13 RETURNING *`,
+        status = $6, setup_token = $7, hmac_secret = $8, is_blocked = $9, blocked_at = $10, trial_started_at = $11, grace_ends_at = $12, activated_at = $13, updated_at = $14
+       WHERE id = $15 RETURNING *`,
       [next.school_name, next.school_slug, next.domain, next.api_base, next.supabase_url,
        next.status, next.setup_token, next.hmac_secret,
+       next.is_blocked, next.blocked_at,
        next.trial_started_at, next.grace_ends_at, next.activated_at, next.updated_at, id]
     );
     return result.rows[0] ? rowToInstance(result.rows[0]) : undefined;

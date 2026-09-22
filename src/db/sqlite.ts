@@ -130,15 +130,22 @@ export class SqliteDatabase implements ControlDatabase {
     const existing = await this.getInstanceById(id);
     if (!existing) return undefined;
     const next = { ...existing, ...patch, updated_at: new Date().toISOString() };
+    const toSqlite = (v: unknown): string | number | bigint | Buffer | null => {
+      if (v === undefined || v === null) return null;
+      if (typeof v === 'boolean') return v ? 1 : 0;
+      if (typeof v === 'number' || typeof v === 'bigint' || typeof v === 'string' || Buffer.isBuffer(v)) return v;
+      return String(v);
+    };
     this.db.prepare(
       `UPDATE instances SET
         school_name = ?, school_slug = ?, domain = ?, api_base = ?, supabase_url = ?,
-        status = ?, setup_token = ?, hmac_secret = ?, trial_started_at = ?, grace_ends_at = ?, activated_at = ?, updated_at = ?
+        status = ?, setup_token = ?, hmac_secret = ?, is_blocked = ?, blocked_at = ?, trial_started_at = ?, grace_ends_at = ?, activated_at = ?, updated_at = ?
        WHERE id = ?`
     ).run(
       next.school_name, next.school_slug, next.domain, next.api_base, next.supabase_url,
       next.status, next.setup_token, next.hmac_secret,
-      next.trial_started_at, next.grace_ends_at, next.activated_at, next.updated_at, id
+      toSqlite(next.is_blocked), toSqlite(next.blocked_at),
+      toSqlite(next.trial_started_at), toSqlite(next.grace_ends_at), toSqlite(next.activated_at), next.updated_at, id
     );
     return this.getInstanceById(id);
   }
