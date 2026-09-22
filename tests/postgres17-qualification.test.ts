@@ -19,6 +19,7 @@ const EXPECTED_TABLES = [
   "licenses"
 ] as const;
 
+// Helper functions moved inside the describe block or used conditionally to avoid execution at load time
 function requiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -56,12 +57,16 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
   const slugRunId = runId.replaceAll("_", "-");
   const zeroDatabase = `control_v1_zero_${runId}`;
   const migrationDatabase = `control_v1_migration_${runId}`;
-  const adminClient = new pg.Client({ connectionString: connectionString("postgres") });
+
+  // Clients and DB instances are only created when tests run
+  let adminClient: InstanceType<typeof pg.Client>;
   let zeroDb: PostgresDatabase;
   let zeroApp: Awaited<ReturnType<typeof buildApp>>;
   let serverVersion = "";
 
   beforeAll(async () => {
+    // All PG environment reads happen here, only if describePg17 is active
+    adminClient = new pg.Client({ connectionString: connectionString("postgres") });
     await adminClient.connect();
     serverVersion = (await adminClient.query<{ version: string }>("SELECT version() AS version")).rows[0].version;
 
@@ -81,10 +86,12 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
   afterAll(async () => {
     if (zeroApp) await zeroApp.close();
     if (zeroDb) await zeroDb.close();
-    for (const database of [zeroDatabase, migrationDatabase]) {
-      await adminClient.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)} WITH (FORCE)`);
+    if (adminClient) {
+      for (const database of [zeroDatabase, migrationDatabase]) {
+        await adminClient.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)} WITH (FORCE)`);
+      }
+      await adminClient.end();
     }
-    await adminClient.end();
   }, 30_000);
 
   it("installs from zero and consumes a setup token exactly once while remaining in trial", async () => {
