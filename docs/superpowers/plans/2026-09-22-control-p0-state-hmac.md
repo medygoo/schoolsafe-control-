@@ -33,11 +33,12 @@
 - Create `src/types/fastify.d.ts`: typed HMAC principal attached to authenticated requests.
 - Modify `src/db/types.ts`: lifecycle, block fields, transition results, repository method signatures.
 - Modify `src/db/postgres.ts` and `src/db/sqlite.ts`: atomic repository implementations and safe row mapping.
-- Modify `src/db/migration.sql`, `src/db/schema.sql`, and `src/db/schema.sqlite.sql`: transactional migration and convergent fresh schemas.
+- Modify `src/db/migration.sql`, `src/db/schema.sql`, and `src/db/schema.sqlite.sql`: deployer-owned transactional migration and convergent fresh schemas.
 - Modify `src/auth/hmac.ts`: authentication only; no lifecycle/block authorization.
 - Modify `src/app.ts`: construct one state service, register the shared HMAC request context, pass dependencies to routes.
 - Modify `src/routes/instances.ts`, `card-requests.ts`, `card-batches.ts`, `devices.ts`, and `license.ts`: consume service, guards, resolver, and serializers.
 - Create `public/instance-state-ui.js` and modify `public/app.js`, `public/index.html`, and `public/styles.css`: separate lifecycle label from block badge and separate commercial/admin controls.
+- Modify `vitest.config.ts`: discover both TypeScript tests and the explicit JavaScript UI test.
 - Create `tests/helpers/instance-state-contract.ts`: adapter-neutral state matrix reused by SQLite and PostgreSQL tests.
 - Create `tests/instance-state-sqlite.test.ts`, `tests/instance-serializer.test.ts`, `tests/hmac-capabilities.test.ts`, `tests/school-access.test.ts`, `tests/postgres17-state-hmac.test.ts`, and `tests/postgres17-state-concurrency.test.ts`.
 - Modify `tests/control-app.test.ts`, `tests/trial-grace.test.ts`, `tests/license-devicehub.test.ts`, `tests/postgres17-qualification.test.ts`, and `tests/fixtures/control-production-schema.sql` only where the plan explicitly says so. The fixture's legacy status constraint remains `active | blocked`.
@@ -46,6 +47,7 @@
 
 - A valid signature from a blocked suspended instance must return `403 INSTANCE_BLOCKED`, not 401 or `INSTANCE_SUSPENDED`; covered in Task 9.
 - A grace row whose deadline passed before the timer ran must be refreshed to suspended before mutation authorization; covered in Tasks 6, 9, and 14.
+- A stored trial already beyond `grace_ends_at` must become suspended in one refresh and must not use HMAC mutations or setup tokens; covered in Tasks 5, 6, 9, 12, and 13.
 - Repeated block must preserve `blocked_at`, while unblock then re-block must create a later timestamp; covered in Tasks 5 and 12.
 - Two authorized schools with an explicit authorized `school_id` must succeed, while the same request without a school remains ambiguous and fails; covered in Task 10.
 - A timer/activation race must never overwrite `active`, and a block/timer race must never couple the two state dimensions; covered in Task 14.
@@ -93,7 +95,34 @@ Create an active blocked instance with a valid HMAC and assert licence-state rea
 
 Bind two schools, send a valid signed device registration with one explicitly authorized `school_id`, and assert HTTP 200. Keep a paired request without `school_id` expecting `403 PERMISSION_DENIED`.
 
-- [ ] **Step 4: Add the historical migration RED case**
+- [ ] **Step 4: Add creation and HMAC-rotation boundary tests**
+
+Inject the fixed clock `2026-09-22T12:00:00.000Z`, call `POST /instances`, and assert:
+
+```ts
+expect(created).toMatchObject({
+  status: "trial",
+  is_blocked: false,
+  blocked_at: null,
+  trial_started_at: "2026-09-22T12:00:00.000Z",
+  grace_ends_at: "2026-10-09T12:00:00.000Z"
+});
+```
+
+For `POST /instances/:id/revoke-hmac`, snapshot lifecycle, block, setup-token, and creation fields before the request. Require only `hmac_secret` and `updated_at` to change, and require the old HMAC signature to fail immediately while a signature made with the returned replacement secret succeeds.
+
+- [ ] **Step 5: Add the stale-lifecycle RED cases**
+
+Store `status='trial'`, `trial_started_at=J0`, and `grace_ends_at=J17`; inject `now=J18`. With a valid HMAC signature, call one card mutation, one device registration, and one batch mutation. Each must return:
+
+```ts
+expect(response.statusCode).toBe(403);
+expect(response.json().code).toBe("INSTANCE_SUSPENDED");
+```
+
+Using a separate stale-trial witness, prove both setup-token consumption and setup-token regeneration fail without clearing or replacing the stored token.
+
+- [ ] **Step 6: Add the historical migration RED case**
 
 Build a disposable PostgreSQL database from `tests/fixtures/control-production-schema.sql`, insert one active witness and one blocked witness, apply `src/db/migration.sql`, and assert:
 
@@ -104,7 +133,7 @@ expect(blockedRow.is_blocked).toBe(true);
 expect(blockedRow.blocked_at).toBeTruthy();
 ```
 
-- [ ] **Step 5: Run RED and record exact reasons**
+- [ ] **Step 7: Run RED and record exact reasons**
 
 Run:
 
@@ -119,9 +148,12 @@ Expected failures:
 - suspended HMAC mutation currently succeeds;
 - blocked authentication is conflated with authorization;
 - explicit multi-school selection is rejected by `authorized.length !== 1`;
+- creation timestamps are constructed in the route instead of the state service;
+- HMAC rotation depends on unrestricted `updateInstance`;
+- a stale trial beyond `grace_ends_at` can remain trial for one call and can still reach mutation/setup-token paths;
 - migration cannot expose the new block fields or convert legacy blocked safely.
 
-- [ ] **Step 6: Commit only the RED tests**
+- [ ] **Step 8: Commit only the RED tests**
 
 ```bash
 git add tests/control-app.test.ts tests/trial-grace.test.ts tests/license-devicehub.test.ts tests/postgres17-qualification.test.ts
@@ -131,7 +163,7 @@ git commit -m "test(control): expose state and HMAC defects"
 
 Do not push this intentionally red intermediate commit.
 
-### Task 2: Implement the transactional PostgreSQL migration
+### Task 2: Implement the production-equivalent PostgreSQL migration transaction
 
 **Files:**
 - Modify: `src/db/migration.sql`
@@ -139,7 +171,7 @@ Do not push this intentionally red intermediate commit.
 
 **Interfaces:**
 - Consumes: legacy `instances.status` and the historical fixture from Task 1.
-- Produces: idempotent transaction adding `is_blocked`/`blocked_at`, converting legacy blocked rows, and validating constraints.
+- Produces: an idempotent migration body designed to run under the deployer's single outer transaction, adding `is_blocked`/`blocked_at`, converting legacy blocked rows, and validating constraints.
 
 - [ ] **Step 1: Expand the migration test before editing SQL**
 
@@ -151,18 +183,26 @@ ALTER TABLE instances RENAME CONSTRAINT instances_status_check TO legacy_status_
 
 Apply the migration and require success. Add a second migration execution and require no catalog or data change.
 
-- [ ] **Step 2: Add rollback proof before implementation**
+- [ ] **Step 2: Add the production-equivalent `psql` runner before implementation**
 
-Load the migration text and replace its final `COMMIT;` in the test copy with:
+Execute migration fixtures with the same transaction owner and failure semantics as production:
 
-```sql
-SELECT 1 / 0;
-COMMIT;
+```ts
+const result = spawnSync("psql", [
+  "--set", "ON_ERROR_STOP=1",
+  "--single-transaction",
+  connectionString,
+  "--file", migrationPath
+], { encoding: "utf8", env: process.env });
 ```
 
-Expect rejection, execute `ROLLBACK`, then assert `is_blocked` and `blocked_at` do not exist and the witness still has `status='blocked'`.
+Never print `connectionString`. Assert exit code zero for success and non-zero for failure. Before invoking `psql`, reject a migration body containing top-level `BEGIN`, `COMMIT`, or `ROLLBACK`; `--single-transaction` is the only transaction owner because it is the current deployer contract.
 
-- [ ] **Step 3: Run the targeted migration tests RED**
+- [ ] **Step 3: Add rollback and idempotence proof before implementation**
+
+Create a temporary copy containing the full migration followed by `SELECT 1 / 0;`. Run that copy through the exact runner above, then reconnect and assert `is_blocked`/`blocked_at` do not exist and the legacy witness still has `status='blocked'`. Run the unmodified migration once and require all changes, then run it a second time and require identical catalog and witness data. These assertions prove complete commit, complete rollback, idempotence, and absence of premature commits.
+
+- [ ] **Step 4: Run the targeted migration tests RED**
 
 Run:
 
@@ -172,13 +212,11 @@ CONTROL_PG17_QUALIFY=1 CONTROL_PG17_RUN_ID=p0b_migration_red npm test -- tests/p
 
 Expected: failure at missing block columns or the legacy CHECK preventing `blocked -> suspended`.
 
-- [ ] **Step 4: Replace migration ordering with one fail-fast transaction**
+- [ ] **Step 5: Replace migration ordering with one fail-fast migration body**
 
-Implement this structure in `src/db/migration.sql`:
+Implement this structure in `src/db/migration.sql` without `BEGIN`, `COMMIT`, or `ROLLBACK`; production and qualification both wrap the entire file with `psql --set ON_ERROR_STOP=1 --single-transaction`:
 
 ```sql
-BEGIN;
-
 ALTER TABLE instances ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE instances ADD COLUMN IF NOT EXISTS blocked_at TIMESTAMPTZ;
 
@@ -217,7 +255,7 @@ ALTER TABLE instances VALIDATE CONSTRAINT instances_lifecycle_status_check;
 
 For `instances_block_consistency_check`, use a catalog-guarded `DO` block: if absent, add it `NOT VALID`; if present, compare `pg_get_constraintdef` to the expected normalized expression and raise an exception on mismatch. Then validate it.
 
-- [ ] **Step 5: Add explicit pre-commit validation**
+- [ ] **Step 6: Add explicit pre-transaction-completion validation**
 
 Inside a `DO` block, raise exceptions when any query is true:
 
@@ -227,9 +265,9 @@ EXISTS (SELECT 1 FROM instances WHERE is_blocked <> (blocked_at IS NOT NULL))
 EXISTS (SELECT 1 FROM instances WHERE status = 'blocked')
 ```
 
-End with `COMMIT;`. Any exception leaves the whole transaction uncommitted.
+Do not end with `COMMIT;`. A validation exception makes `psql` exit non-zero and `--single-transaction` rolls back the entire file.
 
-- [ ] **Step 6: Run migration tests GREEN**
+- [ ] **Step 7: Run migration tests GREEN with deployer semantics**
 
 Run:
 
@@ -237,9 +275,9 @@ Run:
 CONTROL_PG17_QUALIFY=1 CONTROL_PG17_RUN_ID=p0b_migration_green npm test -- tests/postgres17-qualification.test.ts
 ```
 
-Expected: historical active/blocked migration, renamed constraint, idempotence, and injected rollback all pass. Other Task 1 API tests may remain red.
+Expected: historical active/blocked migration, renamed constraint, complete first-run commit, second-run idempotence, injected-error rollback, and the top-level transaction-control scan all pass. Other Task 1 API tests may remain red.
 
-- [ ] **Step 7: Commit migration and its tests**
+- [ ] **Step 8: Commit migration and its tests**
 
 ```bash
 git add src/db/migration.sql tests/postgres17-qualification.test.ts
@@ -318,7 +356,7 @@ git commit -m "fix(db): separate fresh lifecycle and block state"
 - Create: `tests/helpers/instance-state-contract.ts`
 
 **Interfaces:**
-- Produces: `LifecycleStatus`, `Instance`, `TransitionResult`, and intent-specific `ControlDatabase` methods used by Tasks 5–14.
+- Produces: `LifecycleStatus`, `Instance`, `CreateTrialInput`, `CreateTrialRecord`, `TransitionResult`, and intent-specific `ControlDatabase` methods used by Tasks 5–14.
 - Consumes: exact database fields from Tasks 2–3.
 
 - [ ] **Step 1: Add compile-time contract fixtures**
@@ -364,6 +402,18 @@ export type TransitionResult =
 export type UpdateInstanceProfileInput = Partial<Pick<Instance,
   "school_name" | "school_slug" | "domain" | "api_base" | "supabase_url"
 >>;
+
+export type CreateTrialInput = Pick<Instance,
+  "school_name" | "school_slug" | "domain" | "api_base" | "supabase_url"
+> & {
+  setup_token: string;
+  hmac_secret: string;
+};
+
+export type CreateTrialRecord = CreateTrialInput & Pick<Instance,
+  "status" | "is_blocked" | "blocked_at" | "trial_started_at" |
+  "grace_ends_at" | "activated_at" | "created_at" | "updated_at"
+>;
 ```
 
 - [ ] **Step 4: Replace generic state-writing contracts**
@@ -371,7 +421,9 @@ export type UpdateInstanceProfileInput = Partial<Pick<Instance,
 The `ControlDatabase` interface exposes:
 
 ```ts
+insertTrial(record: CreateTrialRecord): Promise<Instance>;
 updateInstanceProfile(id: string, patch: UpdateInstanceProfileInput): Promise<Instance | undefined>;
+rotateHmacSecret(id: string, secret: string, now: string): Promise<Instance | undefined>;
 activateCommercially(id: string, now: string): Promise<TransitionResult>;
 suspendCommercially(id: string, now: string): Promise<TransitionResult>;
 setAdministrativeBlock(id: string, blocked: boolean, now: string): Promise<TransitionResult>;
@@ -382,6 +434,7 @@ regenerateSetupToken(id: string, token: string, now: string): Promise<Instance |
 ```
 
 Remove public `startTrial`, arbitrary state-bearing `updateInstance`, and unrestricted `activateInstance`/`suspendInstance` signatures.
+Replace broad `createInstance` with `insertTrial`; only `InstanceStateService.createTrial` may assemble a `CreateTrialRecord`. `rotateHmacSecret` may update only `hmac_secret` and `updated_at`; immediate single-secret rotation remains the contract, while `key_id` and progressive rotation stay out of scope.
 
 - [ ] **Step 5: Run typecheck and record expected adapter failures**
 
@@ -415,6 +468,8 @@ git commit -m "refactor(state): define lifecycle repository contracts"
 
 For both adapters assert:
 
+- trial insertion stores the exact service-provided lifecycle and timestamps;
+- HMAC rotation changes only `hmac_secret` and `updated_at`;
 - activation updates only trial/grace/suspended;
 - activation from active returns `invalid_state`;
 - suspension updates only active;
@@ -422,6 +477,8 @@ For both adapters assert:
 - repeated block preserves its timestamp;
 - unblock then re-block uses the new clock value;
 - scheduler advances blocked trial/grace rows while preserving block fields.
+- one refresh moves a stale trial with `grace_ends_at < now` directly to suspended;
+- setup-token consume/regenerate reject stale trial/grace rows whose `grace_ends_at <= now` without mutating the token.
 
 - [ ] **Step 2: Run SQLite and PostgreSQL adapter tests RED**
 
@@ -455,13 +512,19 @@ UPDATE instances
 
 Activation requires `status IN ('trial','grace','suspended')`; suspension requires `status='active'`. Timer updates require their source state in each `WHERE` clause.
 
+Implement `rotateHmacSecret` as one `UPDATE` whose `SET` list is exactly `hmac_secret=$2, updated_at=$3`; return `undefined` when the ID does not exist.
+
+Implement `refreshDueLifecycle` so the most expired condition wins in one statement/transaction: `trial` or `grace` with `grace_ends_at <= now` becomes `suspended`; only a non-expired `trial` at least 14 days old becomes `grace`. Order the suspended condition before the grace condition so a J18 trial cannot stop at grace.
+
 - [ ] **Step 5: Implement SQLite transitions under immediate transactions**
 
 Use `db.transaction(...).immediate()` around read/conditional update/result mapping. Mirror the same source-state conditions and timestamp semantics. Do not implement a broad `UPDATE status=?` helper callable by routes.
 
+Implement the same one-call catch-up ordering as PostgreSQL: check `grace_ends_at <= now` first, then the J14 trial boundary. Implement HMAC rotation with a dedicated prepared statement that names only `hmac_secret` and `updated_at`.
+
 - [ ] **Step 6: Make setup-token operations lifecycle-neutral**
 
-Consumption clears only `setup_token`/`updated_at` for an unexpired trial or grace. Regeneration changes only token/updated time and rejects lifecycles outside trial/grace. Neither operation writes `status`.
+Consumption clears only `setup_token`/`updated_at` when `status IN ('trial','grace')`, `grace_ends_at IS NOT NULL`, and `grace_ends_at > now`. Regeneration uses the same effective-period predicate, changes only token/updated time, and rejects every other row. A stored stale `trial` cannot consume or regenerate a token. Neither operation writes `status`, block fields, or other lifecycle timestamps.
 
 - [ ] **Step 7: Run adapter tests GREEN and typecheck**
 
@@ -501,6 +564,8 @@ await expect(service.activateCommercially("active-id")).rejects.toMatchObject({ 
 
 Assert injected clock strings are passed unchanged and `refreshDueLifecycle` is called by authorization-facing flows.
 
+Add `createTrial` tests with a fixed clock and require `trial_started_at=now`, `grace_ends_at=now+17 days`, `status='trial'`, `is_blocked=false`, `blocked_at=null`, and `activated_at=null`. Add `rotateHmacSecret` tests proving only the secret and `updated_at` change. Add a stale J18 trial test proving one `refreshDueLifecycle` call returns suspended.
+
 - [ ] **Step 2: Run service tests RED**
 
 ```bash
@@ -518,6 +583,8 @@ export type StateClock = () => Date;
 
 export class InstanceStateService {
   constructor(private readonly db: ControlDatabase, private readonly clock: StateClock = () => new Date()) {}
+  createTrial(input: CreateTrialInput): Promise<Instance>;
+  rotateHmacSecret(id: string, secret: string): Promise<Instance>;
   activateCommercially(id: string): Promise<Instance>;
   suspendCommercially(id: string): Promise<Instance>;
   setAdministrativeBlock(id: string, blocked: boolean): Promise<Instance>;
@@ -528,7 +595,7 @@ export class InstanceStateService {
 }
 ```
 
-Convert the clock once per method with `this.clock().toISOString()`. Map `TransitionResult` centrally to `NOT_FOUND` or `INVALID_STATE`.
+Convert the clock once per method with `const now = this.clock()` and reuse that single value. `createTrial` calls `db.insertTrial` with `trial_started_at=now.toISOString()`, `grace_ends_at=new Date(now.getTime() + 17 * 24 * 60 * 60 * 1000).toISOString()`, `status='trial'`, `is_blocked=false`, `blocked_at=null`, `activated_at=null`, and matching `created_at`/`updated_at`. `rotateHmacSecret` passes only ID, replacement secret, and the injected time to the dedicated repository method. Map missing rows and `TransitionResult` centrally to `NOT_FOUND` or `INVALID_STATE`.
 
 - [ ] **Step 4: Construct one service in `buildApp`**
 
@@ -600,7 +667,7 @@ git diff --cached --check
 git commit -m "feat(api): serialize lifecycle and block state consistently"
 ```
 
-### Task 8: Route block, unblock, activate, suspend, timer, and tokens through the service
+### Task 8: Route creation, HMAC rotation, lifecycle actions, timer, and tokens through the service
 
 **Files:**
 - Modify: `src/routes/instances.ts`
@@ -609,11 +676,11 @@ git commit -m "feat(api): serialize lifecycle and block state consistently"
 
 **Interfaces:**
 - Consumes: Tasks 6–7 service and serializer.
-- Produces: safe administrative/commercial HTTP operations; closes unblock RED failure.
+- Produces: safe creation, immediate HMAC rotation, administrative/commercial HTTP operations, and setup-token handling; closes the Task 1 route failures.
 
 - [ ] **Step 1: Extend route tests before edits**
 
-Cover block/unblock for trial, grace, active, suspended; activation from trial/grace/suspended; activation from active rejected; explicit `active -> suspended`; timer on blocked states; repeated block timestamp preservation; re-block timestamp renewal.
+Cover fixed-clock trial creation; HMAC rotation field isolation and immediate old-secret invalidation; block/unblock for trial, grace, active, suspended; activation from trial/grace/suspended; activation from active rejected; explicit `active -> suspended`; timer on blocked states; repeated block timestamp preservation; re-block timestamp renewal; and stale-trial setup-token consume/regenerate rejection.
 
 - [ ] **Step 2: Run route tests RED**
 
@@ -624,6 +691,10 @@ npm test -- tests/control-app.test.ts tests/trial-grace.test.ts
 - [ ] **Step 3: Replace direct database writes**
 
 Update route registration to receive `InstanceStateService`. Replace `db.updateInstance(...status...)`, `db.activateInstance`, `db.suspendInstance`, and direct expiry calls with service methods. `/block` and `/unblock` call only `setAdministrativeBlock`.
+
+`POST /instances` generates only the setup and HMAC secrets, then calls `service.createTrial({ ...validatedBody, setup_token, hmac_secret })`; the route must not construct `status`, `trial_started_at`, `grace_ends_at`, block fields, or creation/update timestamps. `POST /instances/:id/revoke-hmac` generates one replacement secret and calls `service.rotateHmacSecret(id, replacement)`. The current secret becomes invalid immediately; do not introduce `key_id`, overlapping keys, or progressive rotation.
+
+`POST /instances/:id/token` calls `service.regenerateSetupToken`, and `/instances/validate-setup-token` calls `service.consumeSetupToken`. Remove the post-consumption wall-clock check from the route because the repository predicate must reject an expired effective period before any token mutation.
 
 - [ ] **Step 4: Apply the serializer everywhere instances are returned**
 
@@ -676,6 +747,8 @@ Expected: trial/grace/active allow all; unblocked suspended allows only `license
 
 For a blocked instance with an invalid signature expect 401 `AUTH_INVALID`. For the same instance with a valid signature expect 403 `INSTANCE_BLOCKED`. This proves signature validation precedes authorization.
 
+Add a stored stale trial with `grace_ends_at < now` and a valid signature. Card, device, and batch mutation requests must each return `403 INSTANCE_SUSPENDED` after a single guard invocation; the test must reload the instance and prove the stored lifecycle is now suspended.
+
 - [ ] **Step 3: Run HMAC tests RED**
 
 ```bash
@@ -694,7 +767,7 @@ Keep header, instance existence, timestamp, and signature checks. Remove the cur
 
 - [ ] **Step 5: Implement capability authorization**
 
-`authorizeHmacCapability` first calls `stateService.refreshDueLifecycle(instance.id)`, throws `AUTH_INVALID` if the instance disappeared, then checks `is_blocked`, then lifecycle/capability. Add `INSTANCE_SUSPENDED` to `ControlAppErrorCode`.
+`authorizeHmacCapability` first calls `stateService.refreshDueLifecycle(instance.id)` exactly once, throws `AUTH_INVALID` if the instance disappeared, then checks `is_blocked`, then lifecycle/capability. Because refresh fully catches up a J18 trial in one call, stale trial signatures cannot authorize a mutation. Add `INSTANCE_SUSPENDED` to `ControlAppErrorCode`.
 
 - [ ] **Step 6: Compose a shared guard**
 
@@ -799,13 +872,24 @@ git commit -m "fix(auth): resolve HMAC school access consistently"
 - Modify: `public/app.js`
 - Modify: `public/index.html`
 - Modify: `public/styles.css`
+- Modify: `vitest.config.ts`
 - Create: `tests/control-ui-state.test.js`
 
 **Interfaces:**
 - Consumes: serializer fields `lifecycle_status`, compatibility `status`, `is_blocked`, `blocked_at`.
 - Produces: separate labels and non-interchangeable commercial/admin controls.
 
-- [ ] **Step 1: Add DOM/string-level UI tests RED**
+- [ ] **Step 1: Make JavaScript UI tests discoverable**
+
+Change the Vitest include list to exactly:
+
+```ts
+include: ["tests/**/*.test.ts", "tests/**/*.test.js"]
+```
+
+Do not rename or exclude existing TypeScript tests.
+
+- [ ] **Step 2: Add DOM/string-level UI tests RED**
 
 Create `public/instance-state-ui.js` as an ES module exporting `renderInstanceState` and `actionsFor`, then assert:
 
@@ -816,35 +900,40 @@ expect(actionsFor({ lifecycle_status: "active", is_blocked: true })).toEqual(["u
 expect(actionsFor({ lifecycle_status: "suspended", is_blocked: false })).toEqual(["activate", "block"]);
 ```
 
-- [ ] **Step 2: Run UI tests RED**
+- [ ] **Step 3: Run UI tests RED and prove discovery**
 
 ```bash
 npm test -- tests/control-ui-state.test.js
 ```
 
-- [ ] **Step 3: Update UI helpers and rendering**
+Expected: Vitest reports `tests/control-ui-state.test.js` by name and fails on the missing module/helpers. A zero-test result is a plan failure, not success.
+
+- [ ] **Step 4: Update UI helpers and rendering**
 
 Import the two helpers from `public/instance-state-ui.js` in `public/app.js`, and mark the existing application script as `type="module"` in `public/index.html`. Use `lifecycle_status` as canonical with temporary fallback to `status` only for compatibility. Render one lifecycle badge and an additional block badge. Remove `blocked` from lifecycle labels.
 
-- [ ] **Step 4: Separate controls**
+- [ ] **Step 5: Separate controls**
 
 Block/unblock buttons depend only on `is_blocked`. Activate appears for trial/grace/suspended. Suspend appears only for active. After every action, render the server response; never locally assign a lifecycle.
 
-- [ ] **Step 5: Add block styling without changing lifecycle styling**
+- [ ] **Step 6: Add block styling without changing lifecycle styling**
 
 Create a `.status-blocked` or equivalent secondary badge class. Do not reuse `.status.active`, `.status.trial`, `.status.grace`, or `.status.suspended` to encode the administrative dimension.
 
-- [ ] **Step 6: Run UI tests GREEN and build**
+- [ ] **Step 7: Run targeted and full discovery GREEN, then build**
 
 ```bash
 npm test -- tests/control-ui-state.test.js
+npm test
 npm run build
 ```
 
-- [ ] **Step 7: Commit UI changes**
+Expected: the targeted run executes the JavaScript file, and the unfiltered run includes the same UI test in its reported test-file count.
+
+- [ ] **Step 8: Commit UI and discovery changes**
 
 ```bash
-git add public/instance-state-ui.js public/app.js public/index.html public/styles.css tests/control-ui-state.test.js
+git add public/instance-state-ui.js public/app.js public/index.html public/styles.css vitest.config.ts tests/control-ui-state.test.js
 git diff --cached --check
 git commit -m "fix(ui): separate lifecycle and blocked state"
 ```
@@ -864,7 +953,9 @@ git commit -m "fix(ui): separate lifecycle and blocked state"
 
 - [ ] **Step 1: Parameterize the transition matrix**
 
-Run the reusable contract for creation, J14, J17, three allowed activations, retained active suspension, forbidden regressions, token neutrality, generic-update exclusion, and unblock neutrality.
+Run the reusable contract for fixed-clock trial creation (`now`, `now+17 days`, trial, unblocked), J14, direct stale-trial J18-to-suspended catch-up in one refresh, three allowed activations, retained active suspension, forbidden regressions, generic-update exclusion, and unblock neutrality.
+
+Snapshot every field around HMAC rotation and require only `hmac_secret` and `updated_at` to differ. Verify the old signature fails immediately and the new signature succeeds.
 
 - [ ] **Step 2: Parameterize block/time cases**
 
@@ -878,9 +969,11 @@ Use fixed clocks for:
 - repeated block same timestamp;
 - unblock/re-block later timestamp.
 
+Add stale setup-token witnesses for both consumption and regeneration. With stored `status='trial'` and `grace_ends_at < now`, both operations must fail and leave the original token unchanged.
+
 - [ ] **Step 3: Parameterize the full HMAC cross-product**
 
-For four lifecycles × two block values × four capabilities, assert exact allow or error result. Include HTTP integration for each route family, not only the pure matrix.
+For four lifecycles × two block values × four capabilities, assert exact allow or error result. Include HTTP integration for each route family, not only the pure matrix. Add the stored-trial-at-J18 case for cards, devices, and batches; each validly signed request must perform one refresh and return `403 INSTANCE_SUSPENDED`.
 
 - [ ] **Step 4: Run SQLite/full unit suite**
 
@@ -912,11 +1005,11 @@ git commit -m "test(state): cover SQLite lifecycle and HMAC matrix"
 
 - [ ] **Step 1: Instantiate the shared contract with `PostgresDatabase`**
 
-Create a unique disposable database from `CONTROL_PG17_RUN_ID`, initialize it from fresh schema, and run transition, block/time, HMAC capability, and school-resolution critical cases.
+Create a unique disposable database from `CONTROL_PG17_RUN_ID`, initialize it from fresh schema, and run transition, block/time, HMAC capability, and school-resolution critical cases. Include fixed-clock `createTrial`, dedicated HMAC rotation field isolation, one-call J18 trial-to-suspended refresh, and expired setup-token consume/regenerate rejection with the token left unchanged.
 
 - [ ] **Step 2: Add PostgreSQL HTTP integration cases**
 
-Build Fastify with the PostgreSQL adapter and fixed clock. Exercise the four HMAC routes for trial, grace, active, suspended, and administratively blocked principals.
+Build Fastify with the PostgreSQL adapter and fixed clock. Exercise the four HMAC routes for trial, grace, active, suspended, and administratively blocked principals. For a stored J18 trial with a valid signature, cards, devices, and batches must each return `403 INSTANCE_SUSPENDED` and the first request must persist suspended state.
 
 - [ ] **Step 3: Run PostgreSQL 17 qualification**
 
@@ -1019,17 +1112,17 @@ Require matching type, nullability, default, lifecycle CHECK, and block consiste
 
 Before migration insert active and blocked instances plus one row in each of the seven related Control tables. After migration assert counts and identifiers are unchanged, active is unchanged, and blocked is fail-closed.
 
-- [ ] **Step 3: Run strict qualification**
+- [ ] **Step 3: Run strict qualification with the production-equivalent transaction owner**
 
 ```bash
 CONTROL_PG17_QUALIFY=1 CONTROL_PG17_RUN_ID=p0b_equivalence npm test -- tests/postgres17-qualification.test.ts
 ```
 
-Expected logs include PostgreSQL 17.11, seven preserved table counts, legacy conversion result, and `catalog_equivalence_tables=7`; zero differences are allowed.
+The qualification test must invoke the Task 2 `psql --set ON_ERROR_STOP=1 --single-transaction` runner, not `client.query(migrationText)`. Expected logs include PostgreSQL 17.11, seven preserved table counts, legacy conversion result, and `catalog_equivalence_tables=7`; zero differences are allowed.
 
 - [ ] **Step 4: Run the migration twice and compare again**
 
-After the second application, re-read normalized catalog and all witness rows. Require byte-equivalent normalized results and unchanged counts.
+Apply both runs through the same `psql` runner. After the second application, re-read normalized catalog and all witness rows. Require byte-equivalent normalized results and unchanged counts.
 
 - [ ] **Step 5: Commit equivalence evidence**
 
@@ -1076,6 +1169,7 @@ npm test
 ```
 
 Record exact test-file/test counts and verify only PostgreSQL-gated tests are skipped in the non-PG invocation.
+Require the output to name `tests/control-ui-state.test.js`; if it is absent, fail validation even when the command exits zero.
 
 - [ ] **Step 4: Run the full mandatory PostgreSQL 17 suite**
 
@@ -1085,7 +1179,7 @@ Against the existing isolated `postgres:17.11` service bound only to loopback:
 CONTROL_PG17_QUALIFY=1 CONTROL_PG17_RUN_ID=p0b_final npm test
 ```
 
-Require zero skipped PostgreSQL tests and zero failures.
+Require zero skipped PostgreSQL tests and zero failures. Require explicit evidence for fixed-clock trial creation, isolated HMAC rotation, J18 one-call suspension, stale setup-token rejection, and migration success/rollback/idempotence under `psql --single-transaction`.
 
 - [ ] **Step 5: Build application and container**
 
@@ -1114,9 +1208,11 @@ Run:
 rg -n "status\s*=|status:" src/routes src/auth
 rg -n "authorized\.length\s*!==\s*1" src
 rg -n "INSTANCE_BLOCKED|INSTANCE_SUSPENDED" src tests
+rg -n "trial_started_at|grace_ends_at|is_blocked|blocked_at" src/routes/instances.ts
+rg -n "updateInstance\(|createInstance\(" src/routes src/domain
 ```
 
-Every lifecycle mutation must resolve to `InstanceStateService`; no route-local `authorized.length !== 1` may remain. Expected error-code references must be present in shared authorization and tests.
+Every lifecycle mutation and trial creation must resolve to `InstanceStateService`; the route scan may contain response serialization but no construction of lifecycle timestamps/block values. No route/domain use of broad `updateInstance` or `createInstance` may remain, and no route-local `authorized.length !== 1` may remain. Expected error-code references must be present in shared authorization and tests.
 
 - [ ] **Step 8: Confirm final verification made no changes**
 
@@ -1128,7 +1224,9 @@ Report:
 
 - changed files and concise diff;
 - migration order and rollback proof;
+- confirmation that production and qualification both use the single `psql --single-transaction` owner;
 - SQLite and PostgreSQL 17 test counts;
+- explicit discovery/execution of `tests/control-ui-state.test.js`;
 - lifecycle/block and HMAC matrix results;
 - concurrency results;
 - fresh/migrated equality;
