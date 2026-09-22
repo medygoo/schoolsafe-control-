@@ -78,7 +78,7 @@ No block reason or free-form administrative metadata is added in this P0 lot. Th
 | `trial` | explicit commercial activation | `active` | yes |
 | `grace` | explicit commercial activation | `active` | yes |
 | `suspended` | explicit commercial reactivation | `active` | yes |
-| `active` | explicit commercial suspension, if retained | `suspended` | yes |
+| `active` | explicit administrative commercial suspension | `suspended` | yes |
 | `active` | timer, unblock, token, HMAC, generic update | any other state | no |
 | `suspended` | timer, unblock, token, HMAC, generic update | `trial` or `grace` | no |
 | any | administrative block/unblock | unchanged | yes |
@@ -109,7 +109,9 @@ Repository methods enforce their own source states in SQL rather than trusting r
 - trial expiry updates only due `trial` rows;
 - grace expiry updates only due `grace` rows;
 - setup-token consumption does not change lifecycle and succeeds only for an unexpired `trial` or `grace` row;
-- administrative block/unblock changes only `is_blocked`, `blocked_at`, and `updated_at`.
+- administrative block/unblock changes only `is_blocked`, `blocked_at`, and `updated_at`;
+- blocking an already blocked row preserves its existing `blocked_at`;
+- blocking a row that was unblocked creates a new `blocked_at=now`.
 
 An operation that finds an instance but whose source lifecycle is invalid returns a typed transition rejection. It never broadens its `WHERE` clause and never retries by applying a different transition.
 
@@ -119,16 +121,23 @@ After signature validation and before capability authorization, HMAC handling ca
 
 ## 5. Migration of existing data
 
-The PostgreSQL migration is idempotent and transactional:
+The PostgreSQL migration is idempotent and executes in one explicit transaction. Every statement uses fail-fast behavior; no intermediate schema or data state may be committed.
 
-1. Add `is_blocked BOOLEAN NOT NULL DEFAULT false` and nullable `blocked_at` if absent.
-2. Convert every legacy `status='blocked'` row to:
+The required order is:
+
+1. `BEGIN`.
+2. Add `is_blocked BOOLEAN NOT NULL DEFAULT false` and nullable `blocked_at` if absent.
+3. Discover every historical CHECK constraint attached to `instances` that depends on the `status` column, then drop it before changing legacy values. Discovery must use PostgreSQL catalog dependencies, not only a hard-coded constraint name: resolve the `status` attribute number from `pg_attribute`, select `pg_constraint` rows with `contype='c'`, `conrelid='instances'::regclass`, and that attribute number in `conkey`, then quote each discovered `conname` with `format('%I', ...)` before `ALTER TABLE ... DROP CONSTRAINT`.
+4. Convert every legacy `status='blocked'` row to:
    - `status='suspended'`;
    - `is_blocked=true`;
    - `blocked_at=COALESCE(updated_at, NOW())`.
-3. Replace the lifecycle check constraint so `blocked` is no longer valid and only the four commercial states remain.
-4. Add the block consistency constraint.
-5. Preserve all identifiers, tokens, timestamps, related rows, licences, cards, batches, devices, and school bindings.
+5. Add the new lifecycle CHECK allowing only `trial`, `grace`, `active`, and `suspended` as `NOT VALID`, then run `ALTER TABLE instances VALIDATE CONSTRAINT ...`.
+6. Add the block consistency CHECK as `NOT VALID` only when an equivalent constraint is absent, then validate it. On rerun, discover the existing constraint through `pg_constraint`, verify its normalized definition, and validate it rather than attempting a duplicate `ADD CONSTRAINT`. It requires `(is_blocked AND blocked_at IS NOT NULL) OR (NOT is_blocked AND blocked_at IS NULL)`.
+7. Run explicit validation queries proving there is no remaining `status='blocked'`, no invalid lifecycle, and no inconsistent block timestamp. Verify preservation of the expected rows and relationships used by the migration test.
+8. `COMMIT` only after every validation succeeds.
+
+Any catalog lookup, data conversion, constraint creation, constraint validation, or preservation check failure aborts the transaction and performs a complete rollback. The deployer must execute the migration with stop-on-error semantics; it must never continue from a partially applied migration.
 
 Mapping an unknown legacy blocked row to `suspended + blocked` is deliberately fail-closed. It grants neither normal HMAC access nor commercial activation. An administrator must explicitly perform the commercial activation and administrative unblock operations if both are intended.
 
@@ -145,17 +154,19 @@ Instance responses expose the two dimensions explicitly:
 ```json
 {
   "lifecycle_status": "trial",
+  "status": "trial",
   "is_blocked": true,
   "blocked_at": "2026-09-22T12:00:00.000Z"
 }
 ```
 
-For a compatibility window, the existing `status` response field remains as an alias of `lifecycle_status`; it never contains `blocked`. New UI and clients use `lifecycle_status`. The alias is output-only compatibility and does not authorize arbitrary lifecycle writes.
+One common serializer module owns this representation. Its state primitive, provisionally `serializeInstanceState(instance)`, sets `lifecycle_status = instance.status` and temporarily also sets `status = instance.status` as a compatibility alias; neither field ever contains `blocked`. It also emits `is_blocked` and `blocked_at`. The normal `serializeInstance(instance)` and any explicitly scoped projection, including setup/bootstrap responses handled in their own later lot, must reuse this primitive. No route may manually construct different lifecycle/block fields. New UI and clients use `lifecycle_status`; the `status` alias is output-only compatibility and does not authorize arbitrary lifecycle writes.
 
 ### Administrative endpoints
 
-- `POST /instances/:id/block` sets `is_blocked=true` and `blocked_at=now`, idempotently, without changing lifecycle.
+- `POST /instances/:id/block` sets `is_blocked=true` without changing lifecycle. On the first block after an unblocked state it sets `blocked_at=now`; if the row is already blocked, it preserves the existing `blocked_at`.
 - `POST /instances/:id/unblock` sets `is_blocked=false` and `blocked_at=NULL`, idempotently, without changing lifecycle.
+- A later block after an unblock creates a new `blocked_at`; it never restores the timestamp from the previous block period.
 - Both return the complete two-dimensional instance representation.
 
 Examples:
@@ -168,7 +179,7 @@ Examples:
 ### Commercial endpoints
 
 - `POST /instances/:id/activate` is the only route that enters `active`, and accepts only `trial`, `grace`, or `suspended`.
-- If explicit commercial suspension remains supported, `POST /instances/:id/suspend` accepts only `active`.
+- `POST /instances/:id/suspend` is retained as the explicit administrative commercial-suspension action and accepts only `active`, producing `suspended`.
 - Invalid transitions return the existing public `INVALID_STATE` error without changing data.
 - Token validation, token regeneration, HMAC calls, timer execution, profile updates, block, and unblock can never enter `active`.
 
@@ -284,7 +295,8 @@ Implementation follows RED/GREEN/refactor and runs the same domain contract suit
 - block active, unblock: lifecycle remains active;
 - block suspended, unblock: lifecycle remains suspended;
 - commercial activation while blocked changes only lifecycle; HMAC remains blocked;
-- repeated block/unblock calls are idempotent and maintain timestamp consistency.
+- a repeated block preserves the original `blocked_at`;
+- unblock clears `blocked_at`, and a subsequent new block creates a later `blocked_at`.
 
 ### HMAC matrix tests
 
@@ -307,9 +319,12 @@ Assert exact HTTP status and error code. Add separate cases proving an invalid s
 
 ### PostgreSQL migration and concurrency tests
 
+- start from the unmodified historical `active | blocked` fixture, insert one active witness and one blocked witness, and prove the complete transaction succeeds after robustly removing the historical status CHECK;
+- prove the active witness remains `active + is_blocked=false` and the blocked witness becomes `suspended + is_blocked=true` with its expected `blocked_at`;
 - migrate a legacy `blocked` witness to `suspended + is_blocked=true` without data loss;
 - migrate non-blocked lifecycle rows unchanged;
 - run the migration twice;
+- inject a failure before commit and prove schema and data roll back completely;
 - prove fresh/migrated catalog equality;
 - execute the critical transition, blocking, scheduler, and HMAC matrix on PostgreSQL 17;
 - race activation against timer advancement and prove `active` is never overwritten;
