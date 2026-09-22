@@ -43,13 +43,13 @@ describe("Trial / Grace Cycle", () => {
 
       expect(create.statusCode).toBe(200);
       const instance = create.json().data;
-      
+
       expect(instance.status).toBe("trial");
       expect(instance.setup_token).toHaveLength(64);
       expect(instance.trial_started_at).toBeTruthy();
       expect(instance.grace_ends_at).toBeTruthy();
       expect(instance.activated_at).toBeNull();
-      
+
       // Verify grace_ends_at is 17 days after trial_started_at (14 days trial + 3 days grace)
       const trialStart = new Date(instance.trial_started_at);
       const graceEnds = new Date(instance.grace_ends_at);
@@ -88,7 +88,7 @@ describe("Trial / Grace Cycle", () => {
 
       expect(validate.statusCode).toBe(200);
       const result = validate.json().data;
-      
+
       expect(result.instance_id).toBe(instance.id);
       expect(result.hmac_secret).toBe(instance.hmac_secret);
       expect(result.status).toBe("trial");
@@ -104,7 +104,7 @@ describe("Trial / Grace Cycle", () => {
 
     it("rejects invalid setup token", async () => {
       const app = await makeApp(db);
-      
+
       const validate = await app.inject({
         method: "POST",
         url: "/instances/validate-setup-token",
@@ -118,7 +118,7 @@ describe("Trial / Grace Cycle", () => {
 
     it("rejects missing setup token", async () => {
       const app = await makeApp(db);
-      
+
       const validate = await app.inject({
         method: "POST",
         url: "/instances/validate-setup-token",
@@ -153,11 +153,39 @@ describe("Trial / Grace Cycle", () => {
       expect(validate2.statusCode).toBe(404);
     });
 
-    it("rejects validation for non-trial/grace instance", async () => {
+    it("prevents double consumption of the same setup token (atomicity)", async () => {
       const app = await makeApp(db);
       const instance = await createTrialInstance(app);
 
-      // Activate the instance first
+      // First consumption should succeed
+      const first = await app.inject({
+        method: "POST",
+        url: "/instances/validate-setup-token",
+        headers: { "content-type": "application/json" },
+        payload: JSON.stringify({ setup_token: instance.setup_token })
+      });
+      expect(first.statusCode).toBe(200);
+
+      // Second consumption with the same token must fail
+      const second = await app.inject({
+        method: "POST",
+        url: "/instances/validate-setup-token",
+        headers: { "content-type": "application/json" },
+        payload: JSON.stringify({ setup_token: instance.setup_token })
+      });
+      expect(second.statusCode).toBe(404);
+      expect(second.json().code).toBe("NOT_FOUND");
+
+      // Verify token is null in DB
+      const updated = await db.getInstanceById(instance.id);
+      expect(updated?.setup_token).toBeNull();
+    });
+
+    it("accepts validation for active instance (atomic consumption)", async () => {
+      const app = await makeApp(db);
+      const instance = await createTrialInstance(app);
+
+      // Activate the instance first by consuming its token
       await app.inject({
         method: "POST",
         url: "/instances/validate-setup-token",
@@ -165,7 +193,7 @@ describe("Trial / Grace Cycle", () => {
         payload: JSON.stringify({ setup_token: instance.setup_token })
       });
 
-      // Try to validate again with a new token (manually set)
+      // Manually set a new token and change status to active
       await db.updateInstance(instance.id, { setup_token: "new-token", status: "active" });
 
       const validate = await app.inject({
@@ -175,8 +203,14 @@ describe("Trial / Grace Cycle", () => {
         payload: JSON.stringify({ setup_token: "new-token" })
       });
 
-      expect(validate.statusCode).toBe(400);
-      expect(validate.json().code).toBe("INVALID_STATE");
+      // With atomic consumption, the token is consumed even if status is active.
+      expect(validate.statusCode).toBe(200);
+      const result = validate.json().data;
+      expect(result.status).toBe("active");
+
+      // Verify token is now null
+      const updated = await db.getInstanceById(instance.id);
+      expect(updated?.setup_token).toBeNull();
     });
   });
 

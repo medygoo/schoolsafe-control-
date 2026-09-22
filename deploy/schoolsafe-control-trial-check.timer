@@ -1,0 +1,7 @@
+[Unit]
+Description=Run SchoolSafe Control Trial Expiration Check every hour
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+[Install]
+WantedBy=timers.target

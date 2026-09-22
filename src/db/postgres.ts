@@ -301,7 +301,16 @@ export class PostgresDatabase implements ControlDatabase {
     return result.rows[0] ? rowToInstance(result.rows[0]) : undefined;
   }
 
-  async activateInstance(instanceId: string): Promise<Instance | undefined> {
+  async consumeSetupToken(token: string): Promise<Instance | undefined> {
+// Atomic consumption: UPDATE ... WHERE setup_token = ... RETURNING *
+const result = await this.pool.query(
+"UPDATE instances SET setup_token = NULL, updated_at = NOW() WHERE setup_token = $1 RETURNING *",
+[token]
+);
+return result.rows[0] ? rowToInstance(result.rows[0]) : undefined;
+}
+
+async activateInstance(instanceId: string): Promise<Instance | undefined> {
     const now = new Date().toISOString();
     const result = await this.pool.query(
       "UPDATE instances SET status = 'active', activated_at = $1, setup_token = NULL, updated_at = $2 WHERE id = $3 RETURNING *",

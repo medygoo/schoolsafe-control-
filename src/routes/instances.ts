@@ -91,54 +91,47 @@ export function registerInstanceRoutes(app: FastifyInstance, db: ControlDatabase
     return { data: updated };
   });
 
-  // Endpoint pour SchoolSafe : valider le setup token et activer l'instance
+  // Endpoint pour SchoolSafe : valider le setup token (consommation atomique)
   app.post("/instances/validate-setup-token", async (request) => {
     const { setup_token } = request.body as { setup_token?: string };
     if (!setup_token) {
       throw new ControlAppError(400, "VALIDATION_INVALID", "setup_token requis", false);
     }
-    const instance = await db.getInstanceBySetupToken(setup_token);
-    if (!instance) {
+    // Consommation atomique : retourne l'instance si le token était valide et non consommé
+    const consumedInstance = await db.consumeSetupToken(setup_token);
+    if (!consumedInstance) {
       throw new ControlAppError(404, "NOT_FOUND", "Token invalide ou déjà consommé", false);
     }
-    if (instance.status !== "trial" && instance.status !== "grace") {
-      throw new ControlAppError(400, "INVALID_STATE", "L'instance n'est pas en période d'essai ou de grâce", false);
-    }
-    // Vérifier si la période de grâce est expirée
-    if (instance.status === "grace" && instance.grace_ends_at) {
-      const graceEnds = new Date(instance.grace_ends_at);
+    // Vérifier si la période de grâce est expirée (si on est en grace)
+    if (consumedInstance.status === "grace" && consumedInstance.grace_ends_at) {
+      const graceEnds = new Date(consumedInstance.grace_ends_at);
       if (new Date() > graceEnds) {
         throw new ControlAppError(400, "TRIAL_EXPIRED", "La période de grâce est expirée", false);
       }
     }
-    // Consommer le token (le passer à null) sans changer le statut
-    const consumed = await db.updateInstance(instance.id, { setup_token: null });
-    if (!consumed) {
-      throw new ControlAppError(500, "INTERNAL_ERROR", "Erreur lors de la consommation du token", false);
-    }
     return {
       data: {
-        instance_id: consumed.id,
-        school_name: consumed.school_name,
-        domain: consumed.domain,
-        api_base: consumed.api_base,
-        supabase_url: consumed.supabase_url,
-        hmac_secret: consumed.hmac_secret,
-        status: consumed.status,
-        trial_started_at: consumed.trial_started_at,
-        grace_ends_at: consumed.grace_ends_at
+        instance_id: consumedInstance.id,
+        school_name: consumedInstance.school_name,
+        domain: consumedInstance.domain,
+        api_base: consumedInstance.api_base,
+        supabase_url: consumedInstance.supabase_url,
+        hmac_secret: consumedInstance.hmac_secret,
+        status: consumedInstance.status,
+        trial_started_at: consumedInstance.trial_started_at,
+        grace_ends_at: consumedInstance.grace_ends_at
       }
     };
   });
 
-  // Endpoint pour activer une instance suspendue (admin)
+  // Endpoint pour activer une instance (admin/commercial)
   app.post("/instances/:id/activate", async (request) => {
     requireAdminToken(request, adminToken);
     const { id } = request.params as { id: string };
     const instance = await db.getInstanceById(id);
     if (!instance) throw new ControlAppError(404, "NOT_FOUND", "Instance non trouvée", false);
-    if (instance.status !== "suspended") {
-      throw new ControlAppError(400, "INVALID_STATE", "L'instance n'est pas suspendue", false);
+    if (instance.status !== "trial" && instance.status !== "grace" && instance.status !== "suspended") {
+      throw new ControlAppError(400, "INVALID_STATE", "L'instance n'est pas éligible à l'activation (doit être en trial, grace ou suspended)", false);
     }
     const updated = await db.activateInstance(id);
     return { data: updated };

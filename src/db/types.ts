@@ -57,6 +57,7 @@ export interface ControlDatabase {
 
   // Trial/Grace management
   startTrial(instanceId: string): Promise<Instance | undefined>;
+  consumeSetupToken(token: string): Promise<Instance | undefined>;
   activateInstance(instanceId: string): Promise<Instance | undefined>;
   suspendInstance(instanceId: string): Promise<Instance | undefined>;
   checkAndExpireTrials(): Promise<void>;

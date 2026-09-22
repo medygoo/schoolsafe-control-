@@ -312,12 +312,19 @@ export class SqliteDatabase implements ControlDatabase {
     return this.getInstanceById(instanceId);
   }
 
+  async consumeSetupToken(token: string): Promise<Instance | undefined> {
+    // Atomic consumption: UPDATE ... WHERE setup_token = ... RETURNING *
+    const row = this.db.prepare(
+      "UPDATE instances SET setup_token = NULL, updated_at = ? WHERE setup_token = ? RETURNING *"
+    ).get(new Date().toISOString(), token) as Record<string, unknown> | undefined;
+    return row ? rowToInstance(row) : undefined;
+  }
+
   async activateInstance(instanceId: string): Promise<Instance | undefined> {
     const now = new Date().toISOString();
     this.db.prepare(
       "UPDATE instances SET status = 'active', activated_at = ?, setup_token = NULL, updated_at = ? WHERE id = ?"
     ).run(now, now, instanceId);
-
     return this.getInstanceById(instanceId);
   }
 
