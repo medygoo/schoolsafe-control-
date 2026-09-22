@@ -5,9 +5,12 @@ CREATE TABLE IF NOT EXISTS instances (
   domain TEXT NOT NULL,
   api_base TEXT NOT NULL,
   supabase_url TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'blocked')),
-  setup_token TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'trial' CHECK (status IN ('trial', 'grace', 'active', 'suspended', 'blocked')),
+  setup_token TEXT UNIQUE,
   hmac_secret TEXT NOT NULL,
+  trial_started_at TEXT,
+  grace_ends_at TEXT,
+  activated_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

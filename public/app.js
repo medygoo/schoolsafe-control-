@@ -60,7 +60,16 @@
   }
 
   function statusLabel(status) {
-    return { pending: 'En attente', printed: 'Imprimée', failed: 'Échouée', active: 'Active', blocked: 'Bloquée' }[status] || status;
+    return {
+      pending: 'En attente',
+      printed: 'Imprimée',
+      failed: 'Échouée',
+      trial: 'Essai (14j)',
+      grace: 'Grâce (3j)',
+      active: 'Active',
+      suspended: 'Suspendue',
+      blocked: 'Bloquée'
+    }[status] || status;
   }
 
   function formatBadge(fmt) {
@@ -187,33 +196,63 @@
   // ═══════════════════════════════════════════════════════════════════════
   // INSTANCES
   // ═══════════════════════════════════════════════════════════════════════
+  function formatDateOnly(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  function renderTrialInfo(i) {
+    if (i.status === 'trial') {
+      const start = i.trial_started_at ? formatDateOnly(i.trial_started_at) : '—';
+      return `<div style="font-size:0.85em;color:#666">Début: ${start}</div>`;
+    }
+    if (i.status === 'grace') {
+      const ends = i.grace_ends_at ? formatDateOnly(i.grace_ends_at) : '—';
+      return `<div style="font-size:0.85em;color:#b8860b">Grâce jusqu'au: ${ends}</div>`;
+    }
+    if (i.status === 'active' && i.activated_at) {
+      return `<div style="font-size:0.85em;color:#0a8">Activée le: ${formatDateOnly(i.activated_at)}</div>`;
+    }
+    if (i.status === 'suspended') {
+      return `<div style="font-size:0.85em;color:#c22f2f">Suspendue</div>`;
+    }
+    return '';
+  }
+
   function renderInstances() {
     const tbody = $('instancesBody');
     if (!instancesCache.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty">Aucune école créée.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty">Aucune école créée.</td></tr>';
       return;
     }
     tbody.innerHTML = instancesCache.map(i => {
       const blocked = i.status === 'blocked';
+      const suspended = i.status === 'suspended';
+      const inTrialOrGrace = i.status === 'trial' || i.status === 'grace';
+      const showToken = inTrialOrGrace && i.setup_token;
       return `<tr>
         <td data-label="Nom"><b>${esc(i.school_name)}</b></td>
         <td data-label="Slug">${esc(i.school_slug)}</td>
         <td data-label="Domaine">${esc(i.domain)}</td>
-        <td data-label="Statut"><span class="status ${i.status}">${statusLabel(i.status)}</span></td>
+        <td data-label="Statut"><span class="status ${i.status}">${statusLabel(i.status)}</span>${renderTrialInfo(i)}</td>
         <td data-label="Token setup">
-          <code title="${esc(i.setup_token)}">${maskToken(i.setup_token)}</code>
-          <button class="small" data-copy-token="${esc(i.setup_token)}">Copier</button>
+          ${showToken
+            ? `<code title="${esc(i.setup_token)}">${maskToken(i.setup_token)}</code><button class="small" data-copy-token="${esc(i.setup_token)}">Copier</button>`
+            : '<span style="color:#999">Consommé</span>'}
         </td>
         <td data-label="Secret HMAC">
           <code title="${esc(i.hmac_secret)}">${maskToken(i.hmac_secret)}</code>
           <button class="small" data-copy-hmac="${esc(i.hmac_secret)}">Copier</button>
         </td>
         <td data-label="Actions" class="actions">
-          <button class="small warning" data-token="${i.id}">Nouveau token</button>
+          ${inTrialOrGrace ? '' : `<button class="small warning" data-token="${i.id}">Nouveau token</button>`}
           <button class="small warning" data-hmac="${i.id}">Nouveau HMAC</button>
           ${blocked
             ? `<button class="small success" data-unblock="${i.id}">Débloquer</button>`
-            : `<button class="small danger" data-block="${i.id}">Bloquer</button>`}
+            : suspended
+              ? `<button class="small success" data-activate="${i.id}">Activer</button>`
+              : `<button class="small danger" data-block="${i.id}">Bloquer</button>`}
         </td>
       </tr>`;
     }).join('');
@@ -236,6 +275,19 @@
     tbody.querySelectorAll('button[data-unblock]').forEach(btn => {
       btn.addEventListener('click', () => setInstanceStatus(btn.dataset.unblock, 'unblock'));
     });
+    tbody.querySelectorAll('button[data-activate]').forEach(btn => {
+      btn.addEventListener('click', () => activateSuspendedInstance(btn.dataset.activate));
+    });
+  }
+
+  async function activateSuspendedInstance(id) {
+    try {
+      await api('POST', `/instances/${id}/activate`);
+      toast('Instance activée');
+      await loadDashboard();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
   }
 
   async function regenerateToken(id) {

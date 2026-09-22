@@ -6,7 +6,9 @@ export type ControlAppErrorCode =
   | "NOT_FOUND"
   | "INSTANCE_BLOCKED"
   | "DEPENDENCY_UNAVAILABLE"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  | "INVALID_STATE"
+  | "TRIAL_EXPIRED";
 
 export type ApiErrorBody = {
   code: ControlAppErrorCode;
