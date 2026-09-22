@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/curl -s -X POST http://localhost:3000/instances/check-expired-trials -H "Authorization: Bearer ${ADMIN_TOKEN}"
+ExecStart=/usr/bin/curl -s -X POST ${CONTROL_API_URL:-http://localhost:3000}/instances/check-expired-trials -H "x-admin-token: ${ADMIN_TOKEN}"
 EnvironmentFile=/etc/schoolsafe-control/env
 User=schoolsafe
 Group=schoolsafe

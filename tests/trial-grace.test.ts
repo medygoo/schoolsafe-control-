@@ -181,11 +181,11 @@ describe("Trial / Grace Cycle", () => {
       expect(updated?.setup_token).toBeNull();
     });
 
-    it("accepts validation for active instance (atomic consumption)", async () => {
+    it("rejects setup token on active instance", async () => {
       const app = await makeApp(db);
       const instance = await createTrialInstance(app);
 
-      // Activate the instance first by consuming its token
+      // Consume the original token first
       await app.inject({
         method: "POST",
         url: "/instances/validate-setup-token",
@@ -203,14 +203,13 @@ describe("Trial / Grace Cycle", () => {
         payload: JSON.stringify({ setup_token: "new-token" })
       });
 
-      // With atomic consumption, the token is consumed even if status is active.
-      expect(validate.statusCode).toBe(200);
-      const result = validate.json().data;
-      expect(result.status).toBe("active");
+      // Atomic consumption must reject tokens on active instances
+      expect(validate.statusCode).toBe(404);
+      expect(validate.json().code).toBe("NOT_FOUND");
 
-      // Verify token is now null
+      // Verify token is still present because consumption was refused
       const updated = await db.getInstanceById(instance.id);
-      expect(updated?.setup_token).toBeNull();
+      expect(updated?.setup_token).toBe("new-token");
     });
   });
 

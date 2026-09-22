@@ -302,9 +302,9 @@ export class PostgresDatabase implements ControlDatabase {
   }
 
   async consumeSetupToken(token: string): Promise<Instance | undefined> {
-// Atomic consumption: UPDATE ... WHERE setup_token = ... RETURNING *
+// Atomic consumption with state validation: only trial or grace allowed, and grace must not be expired.
 const result = await this.pool.query(
-"UPDATE instances SET setup_token = NULL, updated_at = NOW() WHERE setup_token = $1 RETURNING *",
+"UPDATE instances SET setup_token = NULL, updated_at = NOW() WHERE setup_token = $1 AND status IN ('trial', 'grace') AND (status != 'grace' OR grace_ends_at > NOW()) RETURNING *",
 [token]
 );
 return result.rows[0] ? rowToInstance(result.rows[0]) : undefined;

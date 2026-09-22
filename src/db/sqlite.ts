@@ -313,9 +313,9 @@ export class SqliteDatabase implements ControlDatabase {
   }
 
   async consumeSetupToken(token: string): Promise<Instance | undefined> {
-    // Atomic consumption: UPDATE ... WHERE setup_token = ... RETURNING *
+    // Atomic consumption with state validation: only trial or grace allowed, and grace must not be expired.
     const row = this.db.prepare(
-      "UPDATE instances SET setup_token = NULL, updated_at = ? WHERE setup_token = ? RETURNING *"
+      "UPDATE instances SET setup_token = NULL, updated_at = ? WHERE setup_token = ? AND status IN ('trial', 'grace') AND (status != 'grace' OR datetime(grace_ends_at) > datetime('now')) RETURNING *"
     ).get(new Date().toISOString(), token) as Record<string, unknown> | undefined;
     return row ? rowToInstance(row) : undefined;
   }
