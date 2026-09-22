@@ -248,7 +248,7 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
     const columns = await client.query<{ column_name: string; data_type: string; is_nullable: string }>(
       `SELECT column_name, data_type, is_nullable FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'instances'
-         AND column_name IN ('setup_token', 'trial_started_at', 'grace_ends_at', 'activated_at')`
+         AND column_name IN ('setup_token', 'trial_started_at', 'grace_ends_at', 'activated_at', 'is_blocked', 'blocked_at')`
     );
     const byName = Object.fromEntries(columns.rows.map((row) => [row.column_name, row]));
     expect(byName.setup_token.is_nullable).toBe("YES");
@@ -260,13 +260,15 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
       `SELECT pg_get_constraintdef(oid) AS definition
        FROM pg_constraint WHERE conname = 'instances_status_check' AND conrelid = 'instances'::regclass`
     );
-    for (const status of ["trial", "grace", "active", "suspended", "blocked"]) {
+    for (const status of ["trial", "grace", "active", "suspended"]) {
       expect(constraint.rows[0].definition).toContain(status);
     }
+    expect(constraint.rows[0].definition).not.toContain("'blocked'");
+
     await client.query(
-      `INSERT INTO instances (school_name, school_slug, domain, api_base, supabase_url, status, setup_token, hmac_secret)
+      `INSERT INTO instances (school_name, school_slug, domain, api_base, supabase_url, status, setup_token, hmac_secret, is_blocked, blocked_at)
        VALUES ('Nullable Token', 'nullable-token', 'nullable.example.test', 'https://nullable.example.test/api',
-               'https://nullable.supabase.test', 'trial', NULL, 'nullable-hmac')`
+               'https://nullable.supabase.test', 'trial', NULL, 'nullable-hmac', false, NULL)`
     );
     await expect(client.query("UPDATE instances SET status = 'invalid' WHERE id = $1", [instanceId]))
       .rejects.toMatchObject({ code: "23514" });
@@ -330,6 +332,8 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
         status,
         setup_token: setupToken,
         hmac_secret: `hmac-${sequence}`,
+        is_blocked: false,
+        blocked_at: null,
         trial_started_at: new Date(dates?.trialStart ?? now).toISOString(),
         grace_ends_at: new Date(dates?.graceEnd ?? now + 17 * dayMs).toISOString(),
         activated_at: null,
@@ -364,7 +368,6 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
     for (const candidate of [
       { status: "active" as const, token: "reject-active" },
       { status: "suspended" as const, token: "reject-suspended" },
-      { status: "blocked" as const, token: "reject-blocked" },
       { status: "grace" as const, token: "reject-expired-grace", graceEnd: now - dayMs }
     ]) {
       const instance = await create(candidate.status, candidate.token, { graceEnd: candidate.graceEnd });
@@ -389,6 +392,8 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
       status: "trial",
       setup_token: "one-concurrent-token",
       hmac_secret: "concurrent-hmac",
+      is_blocked: false,
+      blocked_at: null,
       trial_started_at: timestamp,
       grace_ends_at: new Date(Date.now() + 17 * 24 * 60 * 60 * 1000).toISOString(),
       activated_at: null,

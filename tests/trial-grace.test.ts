@@ -49,6 +49,8 @@ describe("Trial / Grace Cycle", () => {
       expect(instance.trial_started_at).toBeTruthy();
       expect(instance.grace_ends_at).toBeTruthy();
       expect(instance.activated_at).toBeNull();
+      expect(instance.is_blocked).toBe(false);
+      expect(instance.blocked_at).toBeNull();
 
       // Verify grace_ends_at is 17 days after trial_started_at (14 days trial + 3 days grace)
       const trialStart = new Date(instance.trial_started_at);
@@ -225,6 +227,8 @@ describe("Trial / Grace Cycle", () => {
         status: "trial",
         setup_token: "test-token",
         hmac_secret: "test-secret",
+        is_blocked: false,
+        blocked_at: null,
         trial_started_at: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString(), // 15 days ago
         grace_ends_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days ago (already in grace and expired)
         activated_at: null,
@@ -249,6 +253,8 @@ describe("Trial / Grace Cycle", () => {
         status: "trial",
         setup_token: "test-token",
         hmac_secret: "test-secret",
+        is_blocked: false,
+        blocked_at: null,
         trial_started_at: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString(), // 15 days ago
         grace_ends_at: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days from now
         activated_at: null,
@@ -273,6 +279,8 @@ describe("Trial / Grace Cycle", () => {
         status: "active",
         setup_token: null,
         hmac_secret: "test-secret",
+        is_blocked: false,
+        blocked_at: null,
         trial_started_at: new Date().toISOString(),
         grace_ends_at: null,
         activated_at: new Date().toISOString(),
@@ -301,6 +309,8 @@ describe("Trial / Grace Cycle", () => {
         status: "suspended",
         setup_token: null,
         hmac_secret: "test-secret",
+        is_blocked: false,
+        blocked_at: null,
         trial_started_at: new Date().toISOString(),
         grace_ends_at: null,
         activated_at: null,
@@ -331,6 +341,8 @@ describe("Trial / Grace Cycle", () => {
         status: "active",
         setup_token: null,
         hmac_secret: "test-secret",
+        is_blocked: false,
+        blocked_at: null,
         trial_started_at: new Date().toISOString(),
         grace_ends_at: null,
         activated_at: new Date().toISOString(),
@@ -352,7 +364,7 @@ describe("Trial / Grace Cycle", () => {
   describe("Check expired trials endpoint", () => {
     it("checks expired trials via admin endpoint", async () => {
       const app = await makeApp(db);
-      
+
       const check = await app.inject({
         method: "POST",
         url: "/instances/check-expired-trials",

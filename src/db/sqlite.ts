@@ -33,6 +33,8 @@ function rowToInstance(row: Record<string, unknown>): Instance {
     status: String(row.status) as Instance["status"],
     setup_token: row.setup_token ? String(row.setup_token) : null,
     hmac_secret: String(row.hmac_secret),
+    is_blocked: Boolean(row.is_blocked),
+    blocked_at: row.blocked_at ? String(row.blocked_at) : null,
     trial_started_at: row.trial_started_at ? String(row.trial_started_at) : null,
     grace_ends_at: row.grace_ends_at ? String(row.grace_ends_at) : null,
     activated_at: row.activated_at ? String(row.activated_at) : null,

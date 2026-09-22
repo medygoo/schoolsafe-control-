@@ -67,7 +67,7 @@ export async function authenticateHmac(
     throw new ControlAppError(401, "AUTH_INVALID", "Instance inconnue", false);
   }
 
-  if (instance.status === "blocked") {
+  if (instance.is_blocked) {
     throw new ControlAppError(403, "INSTANCE_BLOCKED", "Cette instance est bloquée", false);
   }
 

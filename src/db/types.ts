@@ -1,4 +1,4 @@
-export type InstanceStatus = "trial" | "grace" | "active" | "suspended" | "blocked";
+export type InstanceStatus = "trial" | "grace" | "active" | "suspended";
 
 export type Instance = {
   id: string;
@@ -10,6 +10,8 @@ export type Instance = {
   status: InstanceStatus;
   setup_token: string | null;
   hmac_secret: string;
+  is_blocked: boolean;
+  blocked_at: string | null;
   trial_started_at: string | null;
   grace_ends_at: string | null;
   activated_at: string | null;
