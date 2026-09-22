@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ControlAppError } from "../http/errors.js";
-import { authenticateHmac } from "../auth/hmac.js";
 import { requireAdminToken } from "../auth/admin.js";
-import type { ControlDatabase, CardPrintRequest } from "../db/index.js";
+import { authenticateHmac } from "../auth/hmac.js";
+import { resolveSchoolAndAuthorize } from "../auth/capabilities.js";
+import type { ControlDatabase } from "../db/index.js";
 
 const createRequestSchema = z.object({
   school_id: z.string().min(1).optional(),
@@ -28,12 +28,20 @@ export function registerCardRequestRoutes(app: FastifyInstance, db: ControlDatab
       await authenticateHmac(request, reply, db);
     }
   }, async (request) => {
-    const instanceId = request.headers["x-schoolsafe-instance"] as string;
+    const { schoolId } = await resolveSchoolAndAuthorize(request, db, "cards:create");
     const body = createRequestSchema.parse(request.body);
-    const ids = await db.getAuthorizedSchoolIds(instanceId); const schoolId=ids[0];
-    if (ids.length!==1 || !schoolId || (body.school_id && body.school_id!==schoolId)) throw new ControlAppError(403,"PERMISSION_DENIED","Ecole non autorisee",false);
+    if (body.school_id && body.school_id !== schoolId) {
+      throw new ControlAppError(403, "PERMISSION_DENIED", "École non autorisée", false);
+    }
     const now = new Date().toISOString();
-    const requestRecord = await db.createCardPrintRequest({ instance_id: instanceId, ...body, school_id: schoolId, status:"pending", created_at:now, updated_at:now });
+    const requestRecord = await db.createCardPrintRequest({
+      instance_id: (request.headers["x-schoolsafe-instance"] as string),
+      ...body,
+      school_id: schoolId,
+      status: "pending",
+      created_at: now,
+      updated_at: now
+    });
     return { data: requestRecord };
   });
 

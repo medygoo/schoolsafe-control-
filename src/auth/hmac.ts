@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { ControlAppError } from "../http/errors.js";
 import type { ControlDatabase } from "../db/index.js";
+import { InstanceStateService } from "../domain/instance-state.js";
 
 export function signRequest(payload: {
   method: string;
@@ -10,7 +11,10 @@ export function signRequest(payload: {
   timestamp: number;
   secret: string;
 }): string {
-  const data = `${payload.method.toUpperCase()}\n${payload.path}\n${payload.timestamp}\n${payload.body}`;
+  const data = `${payload.method.toUpperCase()}
+${payload.path}
+${payload.timestamp}
+${payload.body}`;
   return createHmac("sha256", payload.secret).update(data).digest("hex");
 }
 
@@ -62,13 +66,17 @@ export async function authenticateHmac(
     throw new ControlAppError(401, "AUTH_REQUIRED", "En-têtes d'authentification HMAC manquants", false);
   }
 
+  // Refresh lifecycle before checking block status or signature
+  const stateService = new InstanceStateService(db);
+  await stateService.refreshDueLifecycle();
+
   const instance = await db.getInstanceById(instanceId);
   if (!instance) {
     throw new ControlAppError(401, "AUTH_INVALID", "Instance inconnue", false);
   }
 
   if (instance.is_blocked) {
-    throw new ControlAppError(403, "INSTANCE_BLOCKED", "Cette instance est bloquée", false);
+    throw new ControlAppError(403, "INSTANCE_BLOCKED", "Cette instance est bloquée administrativement", false);
   }
 
   // Le client et le serveur signent le JSON compact du body parsé.

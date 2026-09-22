@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ControlAppError } from "../http/errors.js";
 import { authenticateHmac } from "../auth/hmac.js";
 import { requireAdminToken } from "../auth/admin.js";
+import { resolveSchoolAndAuthorize } from "../auth/capabilities.js";
 import type { ControlDatabase } from "../db/index.js";
 
 const createBatchSchema = z.object({
@@ -24,12 +25,18 @@ export function registerCardBatchRoutes(app: FastifyInstance, db: ControlDatabas
       await authenticateHmac(request, reply, db);
     }
   }, async (request) => {
-    const instanceId = request.headers["x-schoolsafe-instance"] as string;
+    const { schoolId } = await resolveSchoolAndAuthorize(request, db, "batches:create");
     const body = createBatchSchema.parse(request.body);
-    const ids = await db.getAuthorizedSchoolIds(instanceId); const schoolId=ids[0];
-    if (ids.length!==1 || !schoolId || (body.school_id && body.school_id!==schoolId)) throw new ControlAppError(403,"PERMISSION_DENIED","Ecole non autorisee",false);
+    if (body.school_id && body.school_id !== schoolId) {
+      throw new ControlAppError(403, "PERMISSION_DENIED", "École non autorisée", false);
+    }
     try {
-      const batch = await db.createCardPrintBatch({ instance_id: instanceId, ...body, school_id: schoolId, status:"pending" });
+      const batch = await db.createCardPrintBatch({
+        instance_id: (request.headers["x-schoolsafe-instance"] as string),
+        ...body,
+        school_id: schoolId,
+        status: "pending"
+      });
       return { data: batch };
     } catch (err) {
       // Un lot (instance, batch_id, version) rejoué est refusé proprement.

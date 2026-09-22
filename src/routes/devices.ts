@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ControlAppError } from "../http/errors.js";
 import { authenticateHmac } from "../auth/hmac.js";
 import { requireAdminToken } from "../auth/admin.js";
+import { resolveSchoolAndAuthorize } from "../auth/capabilities.js";
 import type { ControlDatabase } from "../db/index.js";
 import type { DeviceStatus } from "../db/types.js";
 
@@ -26,13 +27,21 @@ export function registerDeviceRoutes(app: FastifyInstance, db: ControlDatabase, 
       await authenticateHmac(request, reply, db);
     }
   }, async (request) => {
-    const instanceId = request.headers["x-schoolsafe-instance"] as string;
+    const { schoolId } = await resolveSchoolAndAuthorize(request, db, "devices:register");
     const body = registerSchema.parse(request.body);
-    const authorized = await db.getAuthorizedSchoolIds(instanceId);
-    const schoolId = authorized[0];
-    if (authorized.length !== 1 || !schoolId || (body.school_id && body.school_id !== schoolId)) throw new ControlAppError(403, "PERMISSION_DENIED", "Ecole non autorisee", false);
+    if (body.school_id && body.school_id !== schoolId) {
+      throw new ControlAppError(403, "PERMISSION_DENIED", "École non autorisée", false);
+    }
     try {
-      const device = await db.createDevice({ instance_id: instanceId, school_id: schoolId, device_code: body.device_code, vendor: body.vendor, model: body.model, serial_number: body.serial_number, location: body.location ?? null });
+      const device = await db.createDevice({
+        instance_id: (request.headers["x-schoolsafe-instance"] as string),
+        school_id: schoolId,
+        device_code: body.device_code,
+        vendor: body.vendor,
+        model: body.model,
+        serial_number: body.serial_number,
+        location: body.location ?? null
+      });
       return { data: device };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
