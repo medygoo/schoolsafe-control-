@@ -112,11 +112,12 @@ export class PostgresDatabase implements ControlDatabase {
   async createInstance(input: CreateInstanceInput): Promise<Instance> {
     const result = await this.pool.query(
       `INSERT INTO instances
-       (school_name, school_slug, domain, api_base, supabase_url, status, setup_token, hmac_secret, trial_started_at, grace_ends_at, activated_at, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       (school_name, school_slug, domain, api_base, supabase_url, status, setup_token, hmac_secret, is_blocked, blocked_at, trial_started_at, grace_ends_at, activated_at, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [input.school_name, input.school_slug, input.domain, input.api_base, input.supabase_url,
        input.status, input.setup_token, input.hmac_secret,
+       input.is_blocked, input.blocked_at,
        input.trial_started_at, input.grace_ends_at, input.activated_at,
        input.created_at, input.updated_at]
     );
@@ -311,7 +312,7 @@ export class PostgresDatabase implements ControlDatabase {
   async consumeSetupToken(token: string): Promise<Instance | undefined> {
 // Atomic consumption with state validation: only trial or grace allowed, and grace must not be expired.
 const result = await this.pool.query(
-"UPDATE instances SET setup_token = NULL, updated_at = NOW() WHERE setup_token = $1 AND status IN ('trial', 'grace') AND (status != 'grace' OR grace_ends_at > NOW()) RETURNING *",
+"UPDATE instances SET setup_token = NULL, updated_at = NOW() WHERE setup_token = $1 AND status IN ('trial', 'grace') AND grace_ends_at IS NOT NULL AND grace_ends_at > NOW() RETURNING *",
 [token]
 );
 return result.rows[0] ? rowToInstance(result.rows[0]) : undefined;

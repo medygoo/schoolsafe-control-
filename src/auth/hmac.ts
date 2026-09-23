@@ -66,21 +66,13 @@ export async function authenticateHmac(
     throw new ControlAppError(401, "AUTH_REQUIRED", "En-têtes d'authentification HMAC manquants", false);
   }
 
-  // Refresh lifecycle before checking block status or signature
-  const stateService = new InstanceStateService(db);
-  await stateService.refreshDueLifecycle();
-
   const instance = await db.getInstanceById(instanceId);
   if (!instance) {
     throw new ControlAppError(401, "AUTH_INVALID", "Instance inconnue", false);
   }
 
-  if (instance.is_blocked) {
-    throw new ControlAppError(403, "INSTANCE_BLOCKED", "Cette instance est bloquée administrativement", false);
-  }
-
-  // Le client et le serveur signent le JSON compact du body parsé.
-  // Cela évite de devoir intercepter le stream brut et reste déterministe.
+  // Vérifier timestamp et signature AVANT tout contrôle d'état pour ne pas révéler
+  // le statut (bloqué/suspendu) à un requérant non authentifié.
   const body = JSON.stringify(request.body ?? {});
   const valid = verifyRequest({
     method: request.method,
@@ -93,5 +85,19 @@ export async function authenticateHmac(
 
   if (!valid) {
     throw new ControlAppError(401, "AUTH_INVALID", "Signature HMAC invalide ou requête expirée", false);
+  }
+
+  // Seulement après authentification réussie : refresh lifecycle + contrôles d'état
+  const stateService = new InstanceStateService(db);
+  await stateService.refreshDueLifecycle();
+
+  // Re-fetch pour obtenir le statut mis à jour par le refresh
+  const freshInstance = await db.getInstanceById(instanceId);
+  if (!freshInstance) {
+    throw new ControlAppError(500, "INTERNAL_ERROR", "Instance disparue après refresh", false);
+  }
+
+  if (freshInstance.is_blocked) {
+    throw new ControlAppError(403, "INSTANCE_BLOCKED", "Cette instance est bloquée administrativement", false);
   }
 }

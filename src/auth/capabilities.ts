@@ -27,7 +27,8 @@ export async function resolveSchoolAndAuthorize(
   requiredCapability: Capability
 ): Promise<AuthContext> {
   const instanceId = request.headers["x-schoolsafe-instance"] as string;
-  const requestedSchoolId = (request.body as any)?.school_id as string | undefined;
+  // Support both body (POST) and query (GET) for school_id resolution
+  const requestedSchoolId = ((request.body as any)?.school_id ?? (request.query as any)?.school_id) as string | undefined;
 
   if (!instanceId) {
     throw new ControlAppError(401, "AUTH_REQUIRED", "En-tête x-schoolsafe-instance manquant", false);
@@ -52,6 +53,9 @@ export async function resolveSchoolAndAuthorize(
 
   const allowedCaps = ALLOWED_CAPABILITIES[freshInstance.status];
   if (!allowedCaps.includes(requiredCapability)) {
+    if (freshInstance.status === "suspended") {
+      throw new ControlAppError(403, "INSTANCE_SUSPENDED", "Cette instance est suspendue commercialement", false);
+    }
     throw new ControlAppError(403, "PERMISSION_DENIED", `Capabilité ${requiredCapability} non autorisée pour le statut ${freshInstance.status}`, false);
   }
 

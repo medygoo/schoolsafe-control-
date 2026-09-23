@@ -115,11 +115,12 @@ export class SqliteDatabase implements ControlDatabase {
   async createInstance(input: CreateInstanceInput): Promise<Instance> {
     const id = crypto.randomUUID();
     const sql = `INSERT INTO instances
-      (id, school_name, school_slug, domain, api_base, supabase_url, status, setup_token, hmac_secret, trial_started_at, grace_ends_at, activated_at, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+      (id, school_name, school_slug, domain, api_base, supabase_url, status, setup_token, hmac_secret, is_blocked, blocked_at, trial_started_at, grace_ends_at, activated_at, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
     this.db.prepare(sql).run(
       id, input.school_name, input.school_slug, input.domain, input.api_base, input.supabase_url,
       input.status, input.setup_token, input.hmac_secret,
+      input.is_blocked ? 1 : 0, input.blocked_at,
       input.trial_started_at, input.grace_ends_at, input.activated_at,
       input.created_at, input.updated_at
     );
@@ -328,7 +329,7 @@ export class SqliteDatabase implements ControlDatabase {
   async consumeSetupToken(token: string): Promise<Instance | undefined> {
     // Atomic consumption with state validation: only trial or grace allowed, and grace must not be expired.
     const row = this.db.prepare(
-      "UPDATE instances SET setup_token = NULL, updated_at = ? WHERE setup_token = ? AND status IN ('trial', 'grace') AND (status != 'grace' OR datetime(grace_ends_at) > datetime('now')) RETURNING *"
+      "UPDATE instances SET setup_token = NULL, updated_at = ? WHERE setup_token = ? AND status IN ('trial', 'grace') AND grace_ends_at IS NOT NULL AND datetime(grace_ends_at) > datetime('now') RETURNING *"
     ).get(new Date().toISOString(), token) as Record<string, unknown> | undefined;
     return row ? rowToInstance(row) : undefined;
   }

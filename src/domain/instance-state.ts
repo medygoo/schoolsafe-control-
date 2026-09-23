@@ -127,11 +127,9 @@ if (!instance) throw new Error("INSTANCE_NOT_FOUND");
 if (instance.status !== "trial" && instance.status !== "grace") {
 throw new Error("INVALID_STATE: token regeneration only allowed in trial/grace");
 }
-// Check if grace is expired
-if (instance.status === "grace" && instance.grace_ends_at) {
-if (new Date() > new Date(instance.grace_ends_at)) {
+// J18: grace_ends_at doit être défini et non expiré pour toute régénération (trial inclus)
+if (!instance.grace_ends_at || new Date() > new Date(instance.grace_ends_at)) {
 throw new Error("TRIAL_EXPIRED");
-}
 }
 const now = new Date().toISOString();
 const updated = await this.db.updateInstance(instanceId, {
