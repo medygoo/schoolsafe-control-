@@ -270,3 +270,14 @@ button.small { padding: 5px 10px; font-size: 12px; }
   .requests-table td::before { content: attr(data-label); font-weight: 800; color: var(--muted); }
   .requests-table .actions { justify-content: flex-end; }
 }
+
+/* School administrator access */
+.access-table-scroll { overflow-x: auto; }
+.access-actions { min-width: 230px; }
+.access-actions button { margin: 3px; }
+.access-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.access-status { display: inline-block; padding: 4px 8px; border-radius: 5px; font-weight: 700; }
+.access-status-active { background: #d7f2e0; color: #12562d; }
+.access-status-suspended { background: #fff0bf; color: #654b00; }
+.access-status-revoked { background: #fce0e0; color: #8e2020; }
+#adminAccessError { color: #a21c1c; }
