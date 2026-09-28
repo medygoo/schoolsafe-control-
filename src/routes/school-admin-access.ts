@@ -142,10 +142,19 @@ export function registerSchoolAdminAccessRoutes(
       data: {
         access_id: row.id,
         status: row.status,
+        email: row.email_normalized,
+        phone: row.phone_normalized,
         onboarding_required: row.school_id === null,
         school_id: row.school_id,
       },
     };
+  });
+  app.get("/internal/school-admin-access/:id/status", async request => {
+    requireBootstrapSecret(request, bootstrapSecret);
+    const {id}=z.object({id:z.string().uuid().transform(value=>value.toLowerCase())}).parse(request.params);
+    const row=await db.getSchoolAdminAccessById(id);
+    if(!row) throw new SchoolAdminAccessError(404,"NOT_FOUND","Accès introuvable.");
+    return {data:{access_id:row.id,status:row.status,school_id:row.school_id}};
   });
   app.post("/internal/school-admin-access/:id/bind-school", async (request) => {
     requireBootstrapSecret(request, bootstrapSecret);

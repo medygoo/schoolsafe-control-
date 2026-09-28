@@ -77,3 +77,10 @@ better-sqlite3 13 ships a compatible Windows prebuild. Without Visual Studio,
 the local install uses npm_config_ignore_scripts=true for npm ci only;
 the shipped SQLite native binary is verified and ALL local tests execute.
 CI retains its unmodified npm ci command and installation scripts.
+
+## SchoolSafe session integration
+
+Verify also returns canonical email and phone (nullable). GET
+/internal/school-admin-access/:id/status uses the same bootstrap protection
+and returns only access_id, status and school_id. It reports suspended and
+revoked states so SchoolSafe can refuse existing sessions.

@@ -263,6 +263,30 @@ for (const engine of ["sqlite", ...(enabled ? ["postgres"] : [])]) {
       ).toBe(200);
     });
 
+
+    it("exposes verified canonical identities without hashes", async()=>{
+      expect((await create({phone:"0891234567"})).statusCode).toBe(201);
+      const result=await verify();
+      expect(result.json().data).toMatchObject({email:"qa-admin-access@schoolsafe.test",phone:"+243891234567"});
+      expect(result.body).not.toContain("password");
+    });
+    it("protects status and reports active, suspended and revoked",async()=>{
+      const id=(await create()).json().data.id;
+      const url="/internal/school-admin-access/"+id+"/status";
+      const status=()=>app.inject({method:"GET",url,headers:bootstrap});
+      expect((await app.inject({method:"GET",url})).statusCode).toBe(401);
+      expect((await app.inject({method:"GET",url,headers:{"x-schoolsafe-bootstrap-secret":"wrong"}})).statusCode).toBe(401);
+      for(const state of ["active","suspended","revoked"]) {
+        if(state==="suspended") await action(id,"suspend");
+        if(state==="revoked") await action(id,"revoke");
+        const result=await status(); expect(result.statusCode).toBe(200);
+        expect(result.json().data).toEqual({access_id:id,status:state,school_id:null});
+        expect(result.body).not.toMatch(/password|scrypt/); expect(result.body).not.toContain(secret);
+      }
+      await app.close(); vi.stubEnv("SCHOOLSAFE_BOOTSTRAP_SECRET","");
+      app=await buildApp({db,adminToken:admin});
+      expect((await status()).statusCode).toBe(503);
+    });
     it("rolls back writes when the audit insert fails", async () => {
       const id = (await create()).json().data.id;
       let rawPg: pg.Client | undefined;
