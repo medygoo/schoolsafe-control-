@@ -266,30 +266,22 @@ for (const engine of ["sqlite", ...(enabled ? ["postgres"] : [])]) {
     it("rolls back writes when the audit insert fails", async () => {
       const id = (await create()).json().data.id;
       let rawPg: pg.Client | undefined;
-      const sqliteRaw = (db as unknown as { db: SQLite.Database }).db;
-      if (engine === "sqlite")
-        sqliteRaw.exec(
-          "CREATE TRIGGER fail_access_audit BEFORE INSERT ON school_admin_access_events BEGIN SELECT RAISE(ABORT, 'forced audit failure'); END;",
-        );
-      else {
-        rawPg = new pg.Client({ database });
-        await rawPg.connect();
-        await rawPg.query(
-          "CREATE FUNCTION fail_access_audit() RETURNS trigger LANGUAGE plpgsql AS $ BEGIN RAISE EXCEPTION 'forced audit failure'; END $; CREATE TRIGGER fail_access_audit BEFORE INSERT ON school_admin_access_events FOR EACH ROW EXECUTE FUNCTION fail_access_audit();",
-        );
-      }
       try {
+        if (engine === "sqlite") {
+          const raw = (db as unknown as { db: SQLite.Database }).db;
+          raw.exec("CREATE TRIGGER fail_access_audit BEFORE INSERT ON school_admin_access_events BEGIN SELECT RAISE(ABORT, 'forced audit failure'); END;");
+        } else {
+          rawPg = new pg.Client({ database });
+          await rawPg.connect();
+          await rawPg.query(
+            "CREATE FUNCTION fail_access_audit() RETURNS trigger LANGUAGE plpgsql AS $audit$ BEGIN RAISE EXCEPTION 'forced audit failure'; END $audit$; CREATE TRIGGER fail_access_audit BEFORE INSERT ON school_admin_access_events FOR EACH ROW EXECUTE FUNCTION fail_access_audit();"
+          );
+        }
         expect((await action(id, "suspend")).statusCode).toBe(503);
         expect((await db.getSchoolAdminAccessById(id))?.status).toBe("active");
-        expect(
-          (await create({ email: "rollback@schoolsafe.test" })).statusCode,
-        ).toBe(503);
-        expect(
-          await db.getSchoolAdminAccessByLogin("rollback@schoolsafe.test"),
-        ).toBeUndefined();
-        expect(
-          (await db.getSchoolAdminAccessEvents(id)).map((e) => e.event_type),
-        ).toEqual(["created"]);
+        expect((await create({ email: "rollback@schoolsafe.test" })).statusCode).toBe(503);
+        expect(await db.getSchoolAdminAccessByLogin("rollback@schoolsafe.test")).toBeUndefined();
+        expect((await db.getSchoolAdminAccessEvents(id)).map(event => event.event_type)).toEqual(["created"]);
       } finally {
         await rawPg?.end();
       }
