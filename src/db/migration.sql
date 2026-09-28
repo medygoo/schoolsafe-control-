@@ -28,3 +28,33 @@ ALTER TABLE instances ALTER COLUMN status SET DEFAULT 'trial';
 CREATE INDEX IF NOT EXISTS idx_instances_slug ON instances(school_slug);
 CREATE INDEX IF NOT EXISTS idx_instances_setup_token ON instances(setup_token);
 CREATE INDEX IF NOT EXISTS idx_instances_status ON instances(status);
+
+-- School administrator authorizations; revoked records remain immutable history.
+CREATE TABLE IF NOT EXISTS school_admin_access (
+ id UUID PRIMARY KEY,
+ display_name TEXT NOT NULL,
+ email_normalized TEXT,
+ phone_normalized TEXT,
+ password_hash TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended','revoked')),
+ school_id UUID,
+ onboarding_state TEXT NOT NULL DEFAULT 'pending' CHECK (onboarding_state IN ('pending','completed')),
+ created_at TIMESTAMPTZ NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL,
+ password_changed_at TIMESTAMPTZ NOT NULL,
+ suspended_at TIMESTAMPTZ,
+ revoked_at TIMESTAMPTZ,
+ school_bound_at TIMESTAMPTZ,
+ CHECK (email_normalized IS NOT NULL OR phone_normalized IS NOT NULL),
+ CHECK ((school_id IS NULL AND onboarding_state='pending' AND school_bound_at IS NULL) OR
+        (school_id IS NOT NULL AND onboarding_state='completed' AND school_bound_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS school_admin_access_email_unique ON school_admin_access(email_normalized) WHERE email_normalized IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS school_admin_access_phone_unique ON school_admin_access(phone_normalized) WHERE phone_normalized IS NOT NULL;
+CREATE TABLE IF NOT EXISTS school_admin_access_events (
+ id UUID PRIMARY KEY,
+ access_id UUID NOT NULL REFERENCES school_admin_access(id),
+ event_type TEXT NOT NULL CHECK(event_type IN ('created','password_reset','suspended','reactivated','revoked','school_bound')),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS school_admin_access_events_access ON school_admin_access_events(access_id);

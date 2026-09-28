@@ -44,6 +44,32 @@ export type CreateInstanceInput = Omit<Instance, "id">;
 export type CreateCardPrintRequestInput = Omit<CardPrintRequest, "id" | "printed_at">;
 
 export interface ControlDatabase {
+  getSchoolAdminAccesses(): Promise<SchoolAdminAccess[]>;
+  getSchoolAdminAccessById(id: string): Promise<SchoolAdminAccess | undefined>;
+  getSchoolAdminAccessByLogin(
+    login: string,
+  ): Promise<SchoolAdminAccess | undefined>;
+  createSchoolAdminAccess(
+    input: CreateSchoolAdminAccess,
+  ): Promise<SchoolAdminAccess>;
+  updateSchoolAdminAccess(
+    id: string,
+    action: SchoolAdminAccessAction,
+    passwordHash?: string,
+  ): Promise<SchoolAdminAccess>;
+  createSchoolAdminAccessEvent(
+    accessId: string,
+    event: SchoolAdminAccessEventType,
+  ): Promise<void>;
+  getSchoolAdminAccessEvents(
+    accessId: string,
+  ): Promise<SchoolAdminAccessEvent[]>;
+  bindSchoolAdminAccess(
+    accessId: string,
+    schoolId: string,
+  ): Promise<SchoolAdminAccess>;
+
+
   init(): Promise<void>;
   ping(): Promise<void>;
   close(): Promise<void>;
@@ -124,3 +150,80 @@ export type CreateDeviceInput = Omit<DeviceRecord, "id" | "status" | "last_seen_
 
 export type LicenseRecord = { instance_id:string; school_id:string; license_id:string; status:"active"|"suspended"|"revoked"; issued_at:string; expires_at:string; grace_days:number; metadata:Record<string,unknown>; };
 export type CreateLicenseInput = LicenseRecord;
+
+export type SchoolAdminAccessStatus = "active" | "suspended" | "revoked";
+export type SchoolAdminOnboardingState = "pending" | "completed";
+export type SchoolAdminAccessEventType =
+  | "created"
+  | "password_reset"
+  | "suspended"
+  | "reactivated"
+  | "revoked"
+  | "school_bound";
+export type SchoolAdminAccessAction =
+  | "reset-password"
+  | "suspend"
+  | "reactivate"
+  | "revoke";
+export type SchoolAdminAccess = {
+  id: string;
+  display_name: string;
+  email_normalized: string | null;
+  phone_normalized: string | null;
+  password_hash: string;
+  status: SchoolAdminAccessStatus;
+  school_id: string | null;
+  onboarding_state: SchoolAdminOnboardingState;
+  created_at: string;
+  updated_at: string;
+  password_changed_at: string;
+  suspended_at: string | null;
+  revoked_at: string | null;
+  school_bound_at: string | null;
+};
+export type CreateSchoolAdminAccess = Pick<
+  SchoolAdminAccess,
+  "display_name" | "email_normalized" | "phone_normalized" | "password_hash"
+>;
+export type SchoolAdminAccessEvent = {
+  id: string;
+  access_id: string;
+  event_type: SchoolAdminAccessEventType;
+  created_at: string;
+};
+export class SchoolAdminAccessError extends Error {
+  constructor(
+    public readonly statusCode: number,
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+export function accessDatabaseError(error: unknown): never {
+  if (error instanceof SchoolAdminAccessError) throw error;
+  const code = (error as { code?: string })?.code;
+  if (code === "23505" || code === "SQLITE_CONSTRAINT_UNIQUE") {
+    throw new SchoolAdminAccessError(
+      409,
+      "IDENTITY_CONFLICT",
+      "Cet identifiant est déjà utilisé.",
+    );
+  }
+  // Database drivers may include row contents in errors. Never pass these to the HTTP logger.
+  throw new SchoolAdminAccessError(
+    503,
+    "DEPENDENCY_UNAVAILABLE",
+    "Stockage des accès indisponible.",
+  );
+}
+export function schoolAdminAccessRow(
+  row: Record<string, unknown>,
+): SchoolAdminAccess {
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [
+      key,
+      value instanceof Date ? value.toISOString() : value,
+    ]),
+  ) as SchoolAdminAccess;
+}

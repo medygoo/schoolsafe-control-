@@ -1,3 +1,4 @@
+import { SchoolAdminAccessError, accessDatabaseError, schoolAdminAccessRow, type SchoolAdminAccess, type SchoolAdminAccessEvent, type SchoolAdminAccessEventType, type CreateSchoolAdminAccess, type SchoolAdminAccessAction } from "./types.js";
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
@@ -355,4 +356,251 @@ export class SqliteDatabase implements ControlDatabase {
     ).run(now, now);
   }
 
+
+  async getSchoolAdminAccesses(): Promise<SchoolAdminAccess[]> {
+    try {
+      const rows = this.db
+        .prepare(
+          "SELECT * FROM school_admin_access ORDER BY created_at DESC,id",
+        )
+        .all() as Record<string, unknown>[];
+      return rows.map(schoolAdminAccessRow);
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+  async getSchoolAdminAccessById(
+    id: string,
+  ): Promise<SchoolAdminAccess | undefined> {
+    try {
+      const rows = this.db
+        .prepare("SELECT * FROM school_admin_access WHERE id=?")
+        .all(id) as Record<string, unknown>[];
+      return rows[0] ? schoolAdminAccessRow(rows[0]) : undefined;
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+  async getSchoolAdminAccessByLogin(
+    login: string,
+  ): Promise<SchoolAdminAccess | undefined> {
+    try {
+      const rows = this.db
+        .prepare(
+          "SELECT * FROM school_admin_access WHERE email_normalized=? OR phone_normalized=?",
+        )
+        .all(login, login) as Record<string, unknown>[];
+      return rows[0] ? schoolAdminAccessRow(rows[0]) : undefined;
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+  async createSchoolAdminAccess(
+    input: CreateSchoolAdminAccess,
+  ): Promise<SchoolAdminAccess> {
+    try {
+      return this.db.transaction(() => {
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        this.db
+          .prepare(
+            "INSERT INTO school_admin_access(id,display_name,email_normalized,phone_normalized,password_hash,status,onboarding_state,created_at,updated_at,password_changed_at) VALUES(?,?,?,?,?,'active','pending',?,?,?)",
+          )
+          .run(
+            id,
+            input.display_name,
+            input.email_normalized,
+            input.phone_normalized,
+            input.password_hash,
+            now,
+            now,
+            now,
+          );
+        this.db
+          .prepare(
+            "INSERT INTO school_admin_access_events(id,access_id,event_type) VALUES(?,?,?)",
+          )
+          .run(randomUUID(), id, "created");
+        return schoolAdminAccessRow(
+          this.db
+            .prepare("SELECT * FROM school_admin_access WHERE id=?")
+            .get(id) as Record<string, unknown>,
+        );
+      })();
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+  async updateSchoolAdminAccess(
+    id: string,
+    action: SchoolAdminAccessAction,
+    passwordHash?: string,
+  ): Promise<SchoolAdminAccess> {
+    try {
+      return this.db.transaction(() => {
+        const row = this.db
+          .prepare("SELECT * FROM school_admin_access WHERE id=?")
+          .get(id) as Record<string, unknown> | undefined;
+        if (!row)
+          throw new SchoolAdminAccessError(
+            404,
+            "NOT_FOUND",
+            "Accès introuvable.",
+          );
+        if (row.status === "revoked")
+          throw new SchoolAdminAccessError(
+            409,
+            "INVALID_STATE",
+            "Accès révoqué définitivement.",
+          );
+        const now = new Date().toISOString();
+        let event: SchoolAdminAccessEventType;
+        if (action === "reset-password") {
+          if (!passwordHash)
+            throw new SchoolAdminAccessError(
+              400,
+              "VALIDATION_INVALID",
+              "Mot de passe requis.",
+            );
+          this.db
+            .prepare(
+              "UPDATE school_admin_access SET password_hash=?,password_changed_at=?,updated_at=? WHERE id=?",
+            )
+            .run(passwordHash, now, now, id);
+          event = "password_reset";
+        } else if (action === "suspend") {
+          if (row.status !== "active")
+            throw new SchoolAdminAccessError(
+              409,
+              "INVALID_STATE",
+              "Accès non actif.",
+            );
+          this.db
+            .prepare(
+              "UPDATE school_admin_access SET status='suspended',suspended_at=?,updated_at=? WHERE id=?",
+            )
+            .run(now, now, id);
+          event = "suspended";
+        } else if (action === "reactivate") {
+          if (row.status !== "suspended")
+            throw new SchoolAdminAccessError(
+              409,
+              "INVALID_STATE",
+              "Accès non suspendu.",
+            );
+          this.db
+            .prepare(
+              "UPDATE school_admin_access SET status='active',suspended_at=NULL,updated_at=? WHERE id=?",
+            )
+            .run(now, id);
+          event = "reactivated";
+        } else {
+          this.db
+            .prepare(
+              "UPDATE school_admin_access SET status='revoked',revoked_at=?,updated_at=? WHERE id=?",
+            )
+            .run(now, now, id);
+          event = "revoked";
+        }
+        this.db
+          .prepare(
+            "INSERT INTO school_admin_access_events(id,access_id,event_type) VALUES(?,?,?)",
+          )
+          .run(randomUUID(), id, event);
+        return schoolAdminAccessRow(
+          this.db
+            .prepare("SELECT * FROM school_admin_access WHERE id=?")
+            .get(id) as Record<string, unknown>,
+        );
+      })();
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+  async bindSchoolAdminAccess(
+    id: string,
+    schoolId: string,
+  ): Promise<SchoolAdminAccess> {
+    try {
+      return this.db.transaction(() => {
+        const row = this.db
+          .prepare("SELECT * FROM school_admin_access WHERE id=?")
+          .get(id) as Record<string, unknown> | undefined;
+        if (!row)
+          throw new SchoolAdminAccessError(
+            404,
+            "NOT_FOUND",
+            "Accès introuvable.",
+          );
+        if (row.status !== "active")
+          throw new SchoolAdminAccessError(
+            403,
+            row.status === "suspended" ? "ACCESS_SUSPENDED" : "ACCESS_REVOKED",
+            "Accès refusé.",
+          );
+        if (row.school_id && row.school_id !== schoolId)
+          throw new SchoolAdminAccessError(
+            409,
+            "SCHOOL_BIND_CONFLICT",
+            "Accès déjà rattaché à une autre école.",
+          );
+        if (!row.school_id) {
+          const now = new Date().toISOString();
+          this.db
+            .prepare(
+              "UPDATE school_admin_access SET school_id=?,onboarding_state='completed',school_bound_at=?,updated_at=? WHERE id=?",
+            )
+            .run(schoolId, now, now, id);
+          this.db
+            .prepare(
+              "INSERT INTO school_admin_access_events(id,access_id,event_type) VALUES(?,?,?)",
+            )
+            .run(randomUUID(), id, "school_bound");
+        }
+        return schoolAdminAccessRow(
+          this.db
+            .prepare("SELECT * FROM school_admin_access WHERE id=?")
+            .get(id) as Record<string, unknown>,
+        );
+      })();
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+  async createSchoolAdminAccessEvent(
+    id: string,
+    event: SchoolAdminAccessEventType,
+  ): Promise<void> {
+    try {
+      return this.db.transaction(() => {
+        this.db
+          .prepare(
+            "INSERT INTO school_admin_access_events(id,access_id,event_type) VALUES(?,?,?)",
+          )
+          .run(randomUUID(), id, event);
+      })();
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+  async getSchoolAdminAccessEvents(
+    id: string,
+  ): Promise<SchoolAdminAccessEvent[]> {
+    try {
+      const rows = this.db
+        .prepare(
+          "SELECT * FROM school_admin_access_events WHERE access_id=? ORDER BY rowid",
+        )
+        .all(id) as Record<string, unknown>[];
+      return rows.map((row) => ({
+        ...row,
+        created_at:
+          row.created_at instanceof Date
+            ? row.created_at.toISOString()
+            : row.created_at,
+      })) as SchoolAdminAccessEvent[];
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
 }

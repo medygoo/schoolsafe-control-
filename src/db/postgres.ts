@@ -1,3 +1,5 @@
+import { SchoolAdminAccessError, accessDatabaseError, schoolAdminAccessRow, type SchoolAdminAccess, type SchoolAdminAccessEvent, type SchoolAdminAccessEventType, type CreateSchoolAdminAccess, type SchoolAdminAccessAction } from "./types.js";
+import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -344,5 +346,289 @@ async activateInstance(instanceId: string): Promise<Instance | undefined> {
     , [now]);
   }
 
-}
 
+  async getSchoolAdminAccesses(): Promise<SchoolAdminAccess[]> {
+    try {
+      const rows = (
+        await this.pool.query(
+          "SELECT * FROM school_admin_access ORDER BY created_at DESC,id",
+          [],
+        )
+      ).rows;
+      return rows.map(schoolAdminAccessRow);
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+  async getSchoolAdminAccessById(
+    id: string,
+  ): Promise<SchoolAdminAccess | undefined> {
+    try {
+      const rows = (
+        await this.pool.query("SELECT * FROM school_admin_access WHERE id=$1", [
+          id,
+        ])
+      ).rows;
+      return rows[0] ? schoolAdminAccessRow(rows[0]) : undefined;
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+  async getSchoolAdminAccessByLogin(
+    login: string,
+  ): Promise<SchoolAdminAccess | undefined> {
+    try {
+      const rows = (
+        await this.pool.query(
+          "SELECT * FROM school_admin_access WHERE email_normalized=$1 OR phone_normalized=$2",
+          [login, login],
+        )
+      ).rows;
+      return rows[0] ? schoolAdminAccessRow(rows[0]) : undefined;
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+  async createSchoolAdminAccess(
+    input: CreateSchoolAdminAccess,
+  ): Promise<SchoolAdminAccess> {
+    const client = await this.pool.connect().catch(accessDatabaseError);
+    try {
+      await client.query("BEGIN");
+      const result = await (async () => {
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        await client.query(
+          "INSERT INTO school_admin_access(id,display_name,email_normalized,phone_normalized,password_hash,status,onboarding_state,created_at,updated_at,password_changed_at) VALUES($1,$2,$3,$4,$5,'active','pending',$6,$7,$8)",
+          [
+            id,
+            input.display_name,
+            input.email_normalized,
+            input.phone_normalized,
+            input.password_hash,
+            now,
+            now,
+            now,
+          ],
+        );
+        await client.query(
+          "INSERT INTO school_admin_access_events(id,access_id,event_type) VALUES($1,$2,$3)",
+          [randomUUID(), id, "created"],
+        );
+        return schoolAdminAccessRow(
+          (
+            await client.query(
+              "SELECT * FROM school_admin_access WHERE id=$1",
+              [id],
+            )
+          ).rows[0],
+        );
+      })();
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      return accessDatabaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+  async updateSchoolAdminAccess(
+    id: string,
+    action: SchoolAdminAccessAction,
+    passwordHash?: string,
+  ): Promise<SchoolAdminAccess> {
+    const client = await this.pool.connect().catch(accessDatabaseError);
+    try {
+      await client.query("BEGIN");
+      const result = await (async () => {
+        const row = (
+          await client.query(
+            "SELECT * FROM school_admin_access WHERE id=$1 FOR UPDATE",
+            [id],
+          )
+        ).rows[0];
+        if (!row)
+          throw new SchoolAdminAccessError(
+            404,
+            "NOT_FOUND",
+            "Accès introuvable.",
+          );
+        if (row.status === "revoked")
+          throw new SchoolAdminAccessError(
+            409,
+            "INVALID_STATE",
+            "Accès révoqué définitivement.",
+          );
+        const now = new Date().toISOString();
+        let event: SchoolAdminAccessEventType;
+        if (action === "reset-password") {
+          if (!passwordHash)
+            throw new SchoolAdminAccessError(
+              400,
+              "VALIDATION_INVALID",
+              "Mot de passe requis.",
+            );
+          await client.query(
+            "UPDATE school_admin_access SET password_hash=$1,password_changed_at=$2,updated_at=$3 WHERE id=$4",
+            [passwordHash, now, now, id],
+          );
+          event = "password_reset";
+        } else if (action === "suspend") {
+          if (row.status !== "active")
+            throw new SchoolAdminAccessError(
+              409,
+              "INVALID_STATE",
+              "Accès non actif.",
+            );
+          await client.query(
+            "UPDATE school_admin_access SET status='suspended',suspended_at=$1,updated_at=$2 WHERE id=$3",
+            [now, now, id],
+          );
+          event = "suspended";
+        } else if (action === "reactivate") {
+          if (row.status !== "suspended")
+            throw new SchoolAdminAccessError(
+              409,
+              "INVALID_STATE",
+              "Accès non suspendu.",
+            );
+          await client.query(
+            "UPDATE school_admin_access SET status='active',suspended_at=NULL,updated_at=$1 WHERE id=$2",
+            [now, id],
+          );
+          event = "reactivated";
+        } else {
+          await client.query(
+            "UPDATE school_admin_access SET status='revoked',revoked_at=$1,updated_at=$2 WHERE id=$3",
+            [now, now, id],
+          );
+          event = "revoked";
+        }
+        await client.query(
+          "INSERT INTO school_admin_access_events(id,access_id,event_type) VALUES($1,$2,$3)",
+          [randomUUID(), id, event],
+        );
+        return schoolAdminAccessRow(
+          (
+            await client.query(
+              "SELECT * FROM school_admin_access WHERE id=$1",
+              [id],
+            )
+          ).rows[0],
+        );
+      })();
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      return accessDatabaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+  async bindSchoolAdminAccess(
+    id: string,
+    schoolId: string,
+  ): Promise<SchoolAdminAccess> {
+    const client = await this.pool.connect().catch(accessDatabaseError);
+    try {
+      await client.query("BEGIN");
+      const result = await (async () => {
+        const row = (
+          await client.query(
+            "SELECT * FROM school_admin_access WHERE id=$1 FOR UPDATE",
+            [id],
+          )
+        ).rows[0];
+        if (!row)
+          throw new SchoolAdminAccessError(
+            404,
+            "NOT_FOUND",
+            "Accès introuvable.",
+          );
+        if (row.status !== "active")
+          throw new SchoolAdminAccessError(
+            403,
+            row.status === "suspended" ? "ACCESS_SUSPENDED" : "ACCESS_REVOKED",
+            "Accès refusé.",
+          );
+        if (row.school_id && row.school_id !== schoolId)
+          throw new SchoolAdminAccessError(
+            409,
+            "SCHOOL_BIND_CONFLICT",
+            "Accès déjà rattaché à une autre école.",
+          );
+        if (!row.school_id) {
+          const now = new Date().toISOString();
+          await client.query(
+            "UPDATE school_admin_access SET school_id=$1,onboarding_state='completed',school_bound_at=$2,updated_at=$3 WHERE id=$4",
+            [schoolId, now, now, id],
+          );
+          await client.query(
+            "INSERT INTO school_admin_access_events(id,access_id,event_type) VALUES($1,$2,$3)",
+            [randomUUID(), id, "school_bound"],
+          );
+        }
+        return schoolAdminAccessRow(
+          (
+            await client.query(
+              "SELECT * FROM school_admin_access WHERE id=$1",
+              [id],
+            )
+          ).rows[0],
+        );
+      })();
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      return accessDatabaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+  async createSchoolAdminAccessEvent(
+    id: string,
+    event: SchoolAdminAccessEventType,
+  ): Promise<void> {
+    const client = await this.pool.connect().catch(accessDatabaseError);
+    try {
+      await client.query("BEGIN");
+      const result = await (async () => {
+        await client.query(
+          "INSERT INTO school_admin_access_events(id,access_id,event_type) VALUES($1,$2,$3)",
+          [randomUUID(), id, event],
+        );
+      })();
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      return accessDatabaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+  async getSchoolAdminAccessEvents(
+    id: string,
+  ): Promise<SchoolAdminAccessEvent[]> {
+    try {
+      const rows = (
+        await this.pool.query(
+          "SELECT * FROM school_admin_access_events WHERE access_id=$1 ORDER BY created_at,id",
+          [id],
+        )
+      ).rows;
+      return rows.map((row) => ({
+        ...row,
+        created_at:
+          row.created_at instanceof Date
+            ? row.created_at.toISOString()
+            : row.created_at,
+      })) as SchoolAdminAccessEvent[];
+    } catch (error) {
+      return accessDatabaseError(error);
+    }
+  }
+}

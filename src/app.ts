@@ -1,3 +1,6 @@
+import { registerSchoolAdminAccessRoutes } from "./routes/school-admin-access.js";
+import { readBootstrapSecret } from "./config/env.js";
+import { SchoolAdminAccessError } from "./db/types.js";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from "fastify";
@@ -27,10 +30,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   app.setErrorHandler((error, _request, reply) => {
     const requestId = newRequestId();
+    if (error instanceof SchoolAdminAccessError) {
+      return reply.status(error.statusCode).send({code:error.code,message:error.message,request_id:requestId,retryable:error.statusCode===503});
+    }
     const known = error instanceof ControlAppError;
     const validation = error instanceof ZodError;
     if (!known && !validation) {
-      console.error("[ERROR]", error);
+      if (_request.url.includes("/school-admin-access")) console.error("[ERROR] School admin access operation failed");
+      else console.error("[ERROR]", error);
     }
     const body: ApiErrorBody = {
       code: known ? error.code : validation ? "VALIDATION_INVALID" : "INTERNAL_ERROR",
@@ -52,6 +59,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     }
   });
 
+  registerSchoolAdminAccessRoutes(app, options.db, options.adminToken, readBootstrapSecret());
   registerInstanceRoutes(app, options.db, options.adminToken);
   registerCardRequestRoutes(app, options.db, options.adminToken);
   registerCardBatchRoutes(app, options.db, options.adminToken);
