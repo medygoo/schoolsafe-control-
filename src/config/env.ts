@@ -5,6 +5,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(4176),
   DATA_DIR: z.string().default("./data"),
   DATABASE_URL: z.string().optional(),
+  SCHOOLSAFE_BOOTSTRAP_SECRET: z.string().optional(),
   ADMIN_TOKEN: z.string().min(16, "ADMIN_TOKEN doit faire au moins 16 caractères")
 });
 
@@ -16,10 +17,15 @@ export function parseEnv(input: Record<string, string | undefined>): ControlAppE
     PORT: input.PORT,
     DATA_DIR: input.DATA_DIR,
     DATABASE_URL: input.DATABASE_URL,
+    SCHOOLSAFE_BOOTSTRAP_SECRET: input.SCHOOLSAFE_BOOTSTRAP_SECRET,
     ADMIN_TOKEN: input.ADMIN_TOKEN
   });
   if (!parsed.success) {
     throw new Error(`Configuration invalide : ${parsed.error.message}`);
   }
   return parsed.data;
+}
+
+export function readBootstrapSecret(): string | undefined {
+  return process.env.SCHOOLSAFE_BOOTSTRAP_SECRET || undefined;
 }

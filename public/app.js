@@ -48,6 +48,8 @@
   }
 
   function logout() {
+    closeAdminAccessForm();
+    $('adminAccessBody').textContent = '';
     adminToken = '';
     localStorage.removeItem('ss-control-token');
     setLoggedIn(false);
@@ -119,6 +121,9 @@
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
     $('requestsPanel').classList.toggle('hidden', name !== 'requests');
     $('instancesPanel').classList.toggle('hidden', name !== 'instances');
+    $('adminAccessPanel').classList.toggle('hidden', name !== 'adminAccess');
+    closeAdminAccessForm();
+    if (name === 'adminAccess') loadAdminAccesses();
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -362,6 +367,102 @@
   $('createInstanceBtn').addEventListener('click', () => toggleCreateForm(true));
   $('cancelCreateBtn').addEventListener('click', () => toggleCreateForm(false));
   $('createInstanceForm').addEventListener('submit', createInstance);
+
+
+  let accessEditId = null;
+  function closeAdminAccessForm() {
+    $('adminAccessForm').reset();
+    $('accessPassword').type = 'password';
+    $('accessPasswordConfirm').type = 'password';
+    $('adminAccessError').textContent = '';
+    $('adminAccessForm').classList.add('hidden');
+    accessEditId = null;
+  }
+  function openAdminAccessForm(id = null) {
+    closeAdminAccessForm();
+    accessEditId = id;
+    $('adminAccessIdentity').classList.toggle('hidden', Boolean(id));
+    $('accessDisplayName').required = !id;
+    $('adminAccessFormTitle').textContent = id ? 'Réinitialiser mot de passe' : 'Créer administrateur';
+    $('saveAdminAccess').textContent = id ? 'RÉINITIALISER LE MOT DE PASSE' : 'CRÉER L’ACCÈS';
+    $('adminAccessForm').classList.remove('hidden');
+    $(id ? 'accessPassword' : 'accessDisplayName').focus();
+  }
+  async function loadAdminAccesses() {
+    try {
+      const result = await api('GET', '/school-admin-access');
+      const body = $('adminAccessBody');
+      body.innerHTML = result.data.map(row => {
+        const actions = row.status === 'revoked' ? 'Accès révoqué' :
+          '<button type="button" data-access-action="reset-password" data-access-id="' + esc(row.id) + '">Réinitialiser mot de passe</button> ' +
+          '<button type="button" data-access-action="' + (row.status === 'active' ? 'suspend' : 'reactivate') + '" data-access-id="' + esc(row.id) + '">' +
+          (row.status === 'active' ? 'Suspendre' : 'Réactiver') + '</button> ' +
+          '<button type="button" class="danger" data-access-action="revoke" data-access-id="' + esc(row.id) + '">Supprimer l’accès</button>';
+        return '<tr><td>' + esc(row.display_name) + '</td><td>' + esc(row.email_normalized || '—') +
+          '</td><td>' + esc(row.phone_normalized || '—') + '</td><td><span class="access-status access-status-' + esc(row.status) + '">' +
+          esc(row.status.toUpperCase()) + '</span></td><td>' + esc(row.school_id || '—') + '</td><td>' +
+          (row.onboarding_state === 'completed' ? 'École créée' : 'À créer') + '</td><td>' +
+          esc(formatDate(row.created_at)) + '</td><td class="access-actions">' + actions + '</td></tr>';
+      }).join('') || '<tr><td colspan="8" class="empty">Aucun accès administrateur.</td></tr>';
+    } catch (error) {
+      $('adminAccessBody').textContent = 'Impossible de charger les accès.';
+      toast(error.message, 'error');
+    }
+  }
+  $('createAdminAccessBtn').addEventListener('click', () => openAdminAccessForm());
+  $('cancelAdminAccess').addEventListener('click', closeAdminAccessForm);
+  $('refreshAdminAccessBtn').addEventListener('click', loadAdminAccesses);
+  $('generateAccessPassword').addEventListener('click', () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const password = Array.from(bytes, byte => alphabet[byte & 63]).join('');
+    $('accessPassword').type = 'text';
+    $('accessPassword').value = password;
+    $('accessPasswordConfirm').value = password;
+  });
+  $('copyAccessPassword').addEventListener('click', () => {
+    if ($('accessPassword').value) copyToClipboard($('accessPassword').value, 'Mot de passe');
+  });
+  $('adminAccessForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const password = $('accessPassword').value;
+    if (password !== $('accessPasswordConfirm').value) {
+      $('adminAccessError').textContent = 'Les mots de passe ne correspondent pas.';
+      return;
+    }
+    const email = $('accessEmail').value.trim() || null;
+    const phone = $('accessPhone').value.trim() || null;
+    if (!accessEditId && !email && !phone) {
+      $('adminAccessError').textContent = 'E-mail ou téléphone requis.';
+      return;
+    }
+    if (accessEditId && !confirm('Réinitialiser le mot de passe ? L’ancien mot de passe sera immédiatement invalidé.')) return;
+    $('saveAdminAccess').disabled = true;
+    try {
+      const path = accessEditId ? '/school-admin-access/' + encodeURIComponent(accessEditId) + '/reset-password' : '/school-admin-access';
+      await api('POST', path, accessEditId ? { password } : { display_name: $('accessDisplayName').value.trim(), email, phone, password });
+      closeAdminAccessForm();
+      toast('Accès administrateur enregistré.');
+      await loadAdminAccesses();
+    } catch (error) {
+      $('adminAccessError').textContent = error.message;
+    } finally { $('saveAdminAccess').disabled = false; }
+  });
+  $('adminAccessBody').addEventListener('click', async event => {
+    const button = event.target.closest('button[data-access-action]');
+    if (!button || button.disabled) return;
+    const id = button.dataset.accessId, action = button.dataset.accessAction;
+    if (action === 'reset-password') { openAdminAccessForm(id); return; }
+    const message = action === 'revoke' ? 'Révoquer définitivement cet accès ?\nL’historique sera conservé.' :
+      action === 'suspend' ? 'Suspendre cet accès administrateur ?' : 'Réactiver cet accès administrateur ?';
+    if (!confirm(message)) return;
+    button.disabled = true;
+    try {
+      await api('POST', '/school-admin-access/' + encodeURIComponent(id) + '/' + action);
+      await loadAdminAccesses();
+    } catch (error) { toast(error.message, 'error'); }
+    finally { button.disabled = false; }
+  });
 
   if (adminToken) setLoggedIn(true);
 })();

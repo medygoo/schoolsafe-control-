@@ -100,7 +100,7 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
   it("installs from zero and consumes a setup token exactly once while remaining in trial", async () => {
     const client = new pg.Client({ connectionString: connectionString(zeroDatabase) });
     await client.connect();
-    expect(await tableNames(client)).toEqual([...EXPECTED_TABLES]);
+    expect(await tableNames(client)).toEqual([...EXPECTED_TABLES, "school_admin_access", "school_admin_access_events"]);
     await client.end();
 
     const create = await zeroApp.inject({
@@ -232,7 +232,7 @@ describePg17("Control V1 PostgreSQL 17 qualification", () => {
 
     await client.query(migration);
 
-    expect(await tableNames(client)).toEqual(tablesBefore);
+    expect(await tableNames(client)).toEqual([...tablesBefore, "school_admin_access", "school_admin_access_events"].sort());
     for (const table of EXPECTED_TABLES) {
       const count = await client.query<{ count: string }>(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)}`);
       expect(Number(count.rows[0].count), table).toBe(countsBefore[table]);

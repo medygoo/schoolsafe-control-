@@ -52,7 +52,42 @@
       <nav class="tabs">
         <button class="tab active" data-tab="requests">Demandes d’impression</button>
         <button class="tab" data-tab="instances">Gestion des écoles</button>
+        <button class="tab" data-tab="adminAccess">ACCÈS ADMINISTRATEURS</button>
       </nav>
+
+
+      <section class="tab-panel hidden" id="adminAccessPanel">
+        <div class="panel-header">
+          <h2>Accès administrateurs d’école</h2>
+          <button id="createAdminAccessBtn" type="button" class="primary">+ Créer administrateur</button>
+          <button id="refreshAdminAccessBtn" type="button" class="secondary">Actualiser</button>
+        </div>
+        <form id="adminAccessForm" class="create-form hidden">
+          <h3 id="adminAccessFormTitle">Créer administrateur</h3>
+          <div id="adminAccessIdentity">
+            <label>Nom complet<input id="accessDisplayName" maxlength="200" required autocomplete="name"></label>
+            <label>E-mail<input id="accessEmail" type="email" maxlength="254" autocomplete="email"></label>
+            <label>Téléphone<input id="accessPhone" type="tel" maxlength="32" autocomplete="tel" placeholder="0891234567"></label>
+            <p>Au moins un e-mail ou un téléphone RDC est obligatoire.</p>
+          </div>
+          <label>Mot de passe<input id="accessPassword" type="password" required minlength="8" maxlength="512" autocomplete="new-password"></label>
+          <label>Confirmation mot de passe<input id="accessPasswordConfirm" type="password" required minlength="8" maxlength="512" autocomplete="new-password"></label>
+          <div class="access-form-actions">
+            <button id="generateAccessPassword" type="button" class="secondary">Générer un mot de passe</button>
+            <button id="copyAccessPassword" type="button" class="secondary">Copier</button>
+            <button id="saveAdminAccess" type="submit" class="primary">CRÉER L’ACCÈS</button>
+            <button id="cancelAdminAccess" type="button" class="secondary">Annuler</button>
+          </div>
+          <p>Le mot de passe ne sera plus récupérable après enregistrement.</p>
+          <p id="adminAccessError" role="alert"></p>
+        </form>
+        <div class="access-table-scroll">
+          <table class="requests-table">
+            <thead><tr><th>Nom</th><th>E-mail</th><th>Téléphone</th><th>Statut</th><th>École</th><th>Onboarding</th><th>Créé le</th><th>Actions</th></tr></thead>
+            <tbody id="adminAccessBody"><tr><td colspan="8">Sélectionnez cet onglet pour charger les accès.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
 
       <section class="tab-panel" id="requestsPanel">
         <div class="filters">

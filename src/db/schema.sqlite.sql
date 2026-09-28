@@ -96,3 +96,33 @@ CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
 
 CREATE TABLE IF NOT EXISTS instance_school_registry (instance_id TEXT NOT NULL, school_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(instance_id,school_id));
 CREATE TABLE IF NOT EXISTS licenses (instance_id TEXT NOT NULL, school_id TEXT NOT NULL, license_id TEXT NOT NULL, status TEXT NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT, grace_days INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(instance_id,school_id));
+
+-- School administrator authorizations; revoked records remain immutable history.
+CREATE TABLE IF NOT EXISTS school_admin_access (
+ id TEXT PRIMARY KEY,
+ display_name TEXT NOT NULL,
+ email_normalized TEXT,
+ phone_normalized TEXT,
+ password_hash TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended','revoked')),
+ school_id TEXT,
+ onboarding_state TEXT NOT NULL DEFAULT 'pending' CHECK (onboarding_state IN ('pending','completed')),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ password_changed_at TEXT NOT NULL,
+ suspended_at TEXT,
+ revoked_at TEXT,
+ school_bound_at TEXT,
+ CHECK (email_normalized IS NOT NULL OR phone_normalized IS NOT NULL),
+ CHECK ((school_id IS NULL AND onboarding_state='pending' AND school_bound_at IS NULL) OR
+        (school_id IS NOT NULL AND onboarding_state='completed' AND school_bound_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS school_admin_access_email_unique ON school_admin_access(email_normalized) WHERE email_normalized IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS school_admin_access_phone_unique ON school_admin_access(phone_normalized) WHERE phone_normalized IS NOT NULL;
+CREATE TABLE IF NOT EXISTS school_admin_access_events (
+ id TEXT PRIMARY KEY,
+ access_id TEXT NOT NULL REFERENCES school_admin_access(id),
+ event_type TEXT NOT NULL CHECK(event_type IN ('created','password_reset','suspended','reactivated','revoked','school_bound')),
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS school_admin_access_events_access ON school_admin_access_events(access_id);
